@@ -1,8 +1,11 @@
 """Command line option parsing."""
 
 import abc
+from functools import reduce
+from itertools import chain
 from os import environ
 
+import deepmerge
 import yaml
 from configargparse import ArgumentParser, Namespace, YAMLConfigFileParser
 from typing import Type
@@ -484,12 +487,24 @@ class GeneralGroup(ArgumentGroup):
             dest="plugin_config",
             type=str,
             required=False,
-            env_var="ACAPY_PLUGINS_CONFIG",
-            help="Load YAML file path that defines external plugins configuration. "
-            "The plugin should be loaded first by --plugin arg. "
-            "Then the config file must be a key-value mapping. "
-            "The key is the plugin argument and "
-            "the value of the specific configuration for that plugin.",
+            env_var="ACAPY_PLUGIN_CONFIG",
+            help="Load YAML file path that defines external plugin configuration.",
+        )
+
+        parser.add_argument(
+            "-o",
+            "--plugin-config-value",
+            dest="plugin_config_values",
+            type=str,
+            nargs="+",
+            action="append",
+            required=False,
+            metavar="<KEY=VALUE>",
+            help=(
+                "Set an arbitrary plugin configuration option in the format "
+                "KEY=VALUE. Use dots in KEY to set deeply nested values, as in "
+                '"a.b.c=value". VALUE is parsed as yaml.'
+            ),
         )
 
         parser.add_argument(
@@ -564,6 +579,18 @@ class GeneralGroup(ArgumentGroup):
         if args.plugin_config:
             with open(args.plugin_config, "r") as stream:
                 settings["plugin_config"] = yaml.safe_load(stream)
+
+        if args.plugin_config_values:
+            if "plugin_config" not in settings:
+                settings["plugin_config"] = {}
+
+            for value_str in chain(*args.plugin_config_values):
+                key, value = value_str.split("=", maxsplit=1)
+                value = yaml.safe_load(value)
+                deepmerge.always_merger.merge(
+                    settings["plugin_config"],
+                    reduce(lambda v, k: {k: v}, key.split(".")[::-1], value),
+                )
 
         if args.storage_type:
             settings["storage_type"] = args.storage_type
@@ -655,6 +682,21 @@ class LedgerGroup(ArgumentGroup):
             env_var="ACAPY_LEDGER_KEEP_ALIVE",
             help="Specifies how many seconds to keep the ledger open. Default: 5",
         )
+        parser.add_argument(
+            "--ledger-socks-proxy",
+            type=str,
+            dest="ledger_socks_proxy",
+            metavar="<host:port>",
+            required=False,
+            env_var="ACAPY_LEDGER_SOCKS_PROXY",
+            help=(
+                "Specifies the socks proxy (NOT http proxy) hostname and port in format "
+                "'hostname:port'. This is an optional parameter to be passed to ledger "
+                "pool configuration and ZMQ in case if aca-py is running "
+                "in a corporate/private network behind a corporate proxy and will "
+                "connect to the public (outside of corporate network) ledger pool"
+            ),
+        )
 
     def get_settings(self, args: Namespace) -> dict:
         """Extract ledger settings."""
@@ -678,6 +720,8 @@ class LedgerGroup(ArgumentGroup):
                 settings["ledger.pool_name"] = args.ledger_pool_name
             if args.ledger_keepalive:
                 settings["ledger.keepalive"] = args.ledger_keepalive
+            if args.ledger_socks_proxy:
+                settings["ledger.socks_proxy"] = args.ledger_socks_proxy
 
         return settings
 
