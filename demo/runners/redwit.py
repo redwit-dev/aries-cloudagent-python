@@ -176,6 +176,7 @@ async def main(args):
                 if faber_agent.aip == 10:
                     # define attributes to send for credential
                     # ["name", "expires", "reg_num", "rank", "department"]
+                    log_msg('aip 10 ver.')
                     faber_agent.agent.cred_attrs[faber_agent.cred_def_id] = {
                         "name": "Alice Smith",
                         "expires": "2021-11-28",
@@ -207,6 +208,7 @@ async def main(args):
 
                 elif faber_agent.aip == 20:
                     if faber_agent.cred_type == CRED_FORMAT_INDY:
+                        log_msg('aip 20 ver. CRED_FORMAT_INDY')
                         faber_agent.agent.cred_attrs[faber_agent.cred_def_id] = {
                             "name": "Alice Smith",
                             "expires": "2021-11-28",
@@ -236,6 +238,7 @@ async def main(args):
                         }
 
                     elif faber_agent.cred_type == CRED_FORMAT_JSON_LD:
+                        log_msg('aip 20 ver. CRED_FORMAT_JSON_LD')
                         offer_request = {
                             "connection_id": faber_agent.agent.connection_id,
                             "filter": {
