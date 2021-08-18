@@ -15,6 +15,7 @@ from runners.agent_container import (  # noqa:E402
     AriesAgent,
 )
 from runners.support.utils import (  # noqa:E402
+    check_requires,
     log_msg,
     log_status,
     prompt,
