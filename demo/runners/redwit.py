@@ -60,6 +60,25 @@ class RedwitAgent(AriesAgent):
     def connection_ready(self):
         return self._connection_ready.done() and self._connection_ready.result()
 
+    async def setup_subagent_key(self):        
+        data = {"method": "key", "options": {"key_type": "bls12381g2"}}
+        headers = {}
+        headers["Authorization"] = (
+            "Bearer " + self.subagent['wallet']['token']
+        )
+        new_did = await self.agency_admin_POST("/wallet/did/create", data=data, headers=headers)
+        self.subagent['key'] = new_did
+        log_msg(self.subagent)
+        return
+
+    async def user_registeration(self):
+        return
+
+    async def user_issue_identification(self):
+        return
+
+    async def user_issue_pass(self):
+        return
 
 async def main(args):
     redwit_agent = await create_agent_with_args(args, ident="redwit")
@@ -85,10 +104,12 @@ async def main(args):
             mediation=redwit_agent.mediation,
             wallet_type=redwit_agent.wallet_type,
             seed=redwit_agent.seed,
+            subagent_wallet_key=redwit_agent.subagent_wallet_key,
         )
 
         redwit_agent.public_did = True
-        await redwit_agent.initialize(the_agent=agent)    
+        await redwit_agent.initialize(the_agent=agent)
+        await agent.setup_subagent_key()
 
         options = "    (X) Exit?\n "
         async for option in prompt_loop(options):
