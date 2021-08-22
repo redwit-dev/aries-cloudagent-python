@@ -60,24 +60,152 @@ class RedwitAgent(AriesAgent):
     def connection_ready(self):
         return self._connection_ready.done() and self._connection_ready.result()
 
-    async def setup_subagent_key(self):        
-        data = {"method": "key", "options": {"key_type": "bls12381g2"}}
-        headers = {}
+    def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
-            "Bearer " + self.subagent['wallet']['token']
+            "Bearer " + token
         )
-        new_did = await self.agency_admin_POST("/wallet/did/create", data=data, headers=headers)
-        self.subagent['key'] = new_did
-        log_msg(self.subagent)
+        return headers
+
+    async def _create_did_key(self, token):   
+        data = {"method": "key", "options": {"key_type": "bls12381g2"}}
+        headers = self._attach_token_headers({}, token)
+        did_key = await self.agency_admin_POST("/wallet/did/create", data=data, headers=headers)
+        log_msg(did_key) # debug
+        return did_key
+
+    async def setup_subagent_key(self):        
+        self.subagent['key'] = await self._create_did_key(self.subagent['wallet']['token'])
         return
 
-    async def user_registeration(self):
+    # TODO: check revocation is required or not
+    async def setup_schemas(self):
+        self.schemas = {}
+
+        # identification schema
+        attrs = [
+        'uid',
+        'internal',
+        'group',
+        'military-id',
+        'name-ko',
+        'name-en',
+        'resident-number-head',
+        'resident-number-tail',
+        'branch',
+        'blood-type',
+        'grade',
+        'issuer',
+        'department',
+        'phone-additional',
+        'phone-mobile'
+        ]
+        s = await self.register_schema_and_creddef(
+                "id_schema",
+                "1.0.0",
+                attrs
+            )
+        self.schemas['identification'] = s
+
+        # pass schema
+        attrs = [
+        'entry-type',
+        'issue-date',
+        'honor-id',
+        'vehicles',
+        'additional-areas',
+        'start-date',
+        'end-date'
+        ]
+        s = await self.register_schema_and_creddef(
+                "pass_schema",
+                "1.0.0",
+                attrs
+            )
+        self.schemas['pass'] = s
+
+
+
+    async def user_registeration(self, name, key):
+        data = {
+        "key_management_mode": "managed",
+        "wallet_dispatch_type": "default",
+        "wallet_name": name,
+        "wallet_key": key,
+        "wallet_type": "indy"
+        }
+
+        # check the name does not exists
+        u = await self.agency_admin_GET("/multitenancy/wallets?wallet_name="+name)
+        err = not ('results' in u.keys())
+        if (err):
+            log_msg("Debug: REST API does not return result.")
+            return False
+        u = u['results']
+        if (len(u) > 0):
+            log_msg("Debug: The user name "+name+" is already used.")
+            return False
+
+        # register user
+        registration = await self.agency_admin_POST("/multitenancy/wallet", data=data)
+        log_msg(registration['token']) # debug
+
+        # register user did(key)
+        await self._create_did_key(registration['token'])
         return
 
-    async def user_issue_identification(self):
+    async def user_issue_identification(self, name, key, data):
+        cred_request = {
+        "@type": "https://didcomm.org/issue-credential/2.0/propose-credential", # TODO: check this meaning
+        "formats": [
+
+        ]
+        }
+
+        cred_preview = {
+        "@type": "https://didcomm.org/issue-credential/2.0/credential-preview", # TODO: check this meaning
+        "attributes": [
+        {"name": n, "value": v}
+        for (n, v) in SAMPLE_ID_DATA.items()
+        ],
+        }
+
+        offer_request = {
+        "connection_id": connection,
+        "comment": f"Offer on cred def id {self.schemas['identification'].cred_def_id}",
+        "auto_remove": False,
+        "credential_preview": cred_preview,
+        "filter": {
+        "indy": {"cred_def_id": self.schemas['identification'].cred_def_id}
+        },
+        "trace": False,
+        }
+
+        # get wallet id
+        user = await self.agency_admin_GET("/multitenancy/wallets?wallet_name="+name)
+        err = not ('results' in user.keys())
+        if (err):
+            log_msg("Debug: REST API does not return result.")
+            return
+        if (len(user['results']) != 1):
+            log_msg("Debug: The results are move than one or empty.")
+            return
+        user_wallet_id = user['results'][0]['wallet_id']
+
+        # get user token
+        data = {
+        'wallet_key': key
+        }
+        res = await self.agency_admin_POST("/multitenancy/wallet/"+user_wallet_id+"/token", data=data)
+        user_wallet_token = res['token']
+
+        # get user did(key)
+
+        # get 
+
+
         return
 
-    async def user_issue_pass(self):
+    async def user_issue_pass(self, name, key):
         return
 
 async def main(args):
@@ -110,14 +238,44 @@ async def main(args):
         redwit_agent.public_did = True
         await redwit_agent.initialize(the_agent=agent)
         await agent.setup_subagent_key()
+        await agent.setup_schemas()
+        await agent.listen_webhooks(8080)
 
-        options = "    (X) Exit?\n "
+        options = ""
+        options += "    (W) DEBUG user_registeration\n"
+        options += "    (I) DEBUG user_issue_identification\n"
+        options += "    (X) Exit?\n "
         async for option in prompt_loop(options):
             if option is not None:
                 option = option.strip()
 
             if option is None or option in "xX":
                 break
+
+            elif option in "wW":
+                await agent.user_registeration("SAMPLE_USER_NAME", "SAMPLE_USER_KEY")
+            elif option in "iI":
+
+                # SAMPLE ID DATA
+                SAMPLE_ID_DATA = {
+                'uid': 'zyxwvu...',
+                'internal': True,
+                'group': '1-1',
+                'military-id': '00-0000',
+                'name-ko': '성춘향',
+                'name-en': 'Seong Chun Hyang',
+                'resident-number-head': '981212',
+                'resident-number-tail': '1234567',
+                'branch': 'ARTILLERY',
+                'blood-type': 'O',
+                'grade': 'ARMY-O-3',
+                'issuer': '육군사관학교',
+                'department': 'A',
+                'phone-additional': '02-123-4567',
+                'phone-mobile': '010-2222-2222'
+                }
+
+                await agent.user_issue_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
 
         if redwit_agent.show_timing:
             timing = await redwit_agent.agent.fetch_timing()
