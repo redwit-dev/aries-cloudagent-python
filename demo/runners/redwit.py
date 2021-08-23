@@ -99,6 +99,7 @@ class RedwitAgent(AriesAgent):
         'phone-additional',
         'phone-mobile'
         ]
+        # which returns schema_id, credential_definition_id
         s = await self.register_schema_and_creddef(
                 "id_schema",
                 "1.0.0",
@@ -116,6 +117,7 @@ class RedwitAgent(AriesAgent):
         'start-date',
         'end-date'
         ]
+        # which returns schema_id, credential_definition_id
         s = await self.register_schema_and_creddef(
                 "pass_schema",
                 "1.0.0",
@@ -154,6 +156,12 @@ class RedwitAgent(AriesAgent):
         return
 
     async def user_issue_identification(self, name, key, data):
+
+        if not self.schemas['identification']: # check tuple is empty
+            self.user_registeration( name, key )
+        else:
+            log_msg( '[identification description]')
+            log_msg( self.schemas['identification'] )
         cred_request = {
         "@type": "https://didcomm.org/issue-credential/2.0/propose-credential", # TODO: check this meaning
         "formats": [
@@ -165,17 +173,17 @@ class RedwitAgent(AriesAgent):
         "@type": "https://didcomm.org/issue-credential/2.0/credential-preview", # TODO: check this meaning
         "attributes": [
         {"name": n, "value": v}
-        for (n, v) in SAMPLE_ID_DATA.items()
+        for (n, v) in data.items()
         ],
         }
 
         offer_request = {
-        "connection_id": connection,
-        "comment": f"Offer on cred def id {self.schemas['identification'].cred_def_id}",
+        "connection_id": self.connection_id,
+        "comment": f"Offer on cred def id {self.schemas['identification'][1]}",
         "auto_remove": False,
         "credential_preview": cred_preview,
         "filter": {
-        "indy": {"cred_def_id": self.schemas['identification'].cred_def_id}
+            "indy": {"cred_def_id": self.schemas['identification'][1]}
         },
         "trace": False,
         }
