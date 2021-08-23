@@ -5,7 +5,10 @@ import os
 import sys
 import time
 
-from aiohttp import ClientError
+from aiohttp import (
+    web,
+    ClientError,
+)
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -216,6 +219,28 @@ class RedwitAgent(AriesAgent):
     async def user_issue_pass(self, name, key):
         return
 
+    async def _handle_webfront_get_default(self, request):
+        resp_obj = {'status': 'success'}
+        return web.Response(text=json.dumps(resp_obj))
+    async def _handle_webfront_post_default(self, request):
+        resp_obj = {'status': 'success'}
+        return web.Response(text=json.dumps(resp_obj))
+
+    async def init_webfront(self, webfront_port):
+        self.webfront_port = webfront_port
+        webfront = web.Application()
+
+        # TODO: implement App REST front
+        webfront.add_routes([
+            web.get('/', self._handle_webfront_get_default),
+            web.post('/', self._handle_webfront_post_default),
+        ])
+
+        runner = web.AppRunner(webfront)
+        await runner.setup()
+        self.webfront_site = web.TCPSite(runner, "0.0.0.0", webfront_port)
+        await self.webfront_site.start()
+
 async def main(args):
     redwit_agent = await create_agent_with_args(args, ident="redwit")
 
@@ -247,7 +272,7 @@ async def main(args):
         await redwit_agent.initialize(the_agent=agent)
         await agent.setup_subagent_key()
         await agent.setup_schemas()
-        await agent.listen_webhooks(8080)
+        await agent.init_webfront(8080)
 
         options = ""
         options += "    (W) DEBUG user_registeration\n"

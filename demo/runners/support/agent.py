@@ -684,10 +684,6 @@ class DemoAgent:
             future = loop.run_in_executor(None, self._terminate)
             result = await asyncio.wait_for(future, 10, loop=loop)
 
-    async def _handle_rest_front(self, request):
-        resp_obj = {'status': 'success'}
-        return web.Response(text=json.dumps(resp_obj))
-
     async def listen_webhooks(self, webhook_port):
         self.webhook_port = webhook_port
         if RUN_MODE == "pwd":
@@ -698,9 +694,6 @@ class DemoAgent:
             )
         app = web.Application()
         app.add_routes([web.post("/webhooks/topic/{topic}/", self._receive_webhook)])
-
-        # TODO: implement App REST front
-        app.router.add_get('/', self._handle_rest_front)
 
         runner = web.AppRunner(app)
         await runner.setup()
