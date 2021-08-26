@@ -25,6 +25,7 @@ from runners.support.utils import (  # noqa:E402
     prompt_loop,
 )
 
+CRED_PREVIEW_TYPE = "https://didcomm.org/issue-credential/2.0/credential-preview"
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 
 logging.basicConfig(level=logging.WARNING)
@@ -69,6 +70,37 @@ class RedwitAgent(AriesAgent):
         )
         return headers
 
+    def _get_token_no(self, token):
+        if token in self.tokenpool:
+            return self.tokenpool[token]
+        else:
+            self.tokenpool[token] = len(self.tokenpool)
+            return self.tokenpool[token]
+    async def _get_connection(self, from_token, to_token):
+        from_token_no = self._get_token_no(from_token)
+        to_token_no = self._get_token_no(to_token)
+
+        # TODO in future, optimize the structure when the user size is very large.
+        if from_token_no in self.connections:
+            if to_token_no in self.connections[from_token_no]:
+                return self.connections[from_token_no][to_token_no]
+        else:
+            self.connections[from_token_no] = {}
+        
+        data = {}
+        headers = self._attach_token_headers({}, from_token)
+        res = await self.agency_admin_POST("/connections/create-invitation", data=data, headers=headers)
+        from_connection = res["connection_id"]
+        data = res["invitation"]
+        headers = self._attach_token_headers({}, to_token)
+        res = await self.agency_admin_POST("/connections/receive-invitation", data=data, headers=headers)
+        to_connection = res["connection_id"]
+        if not (to_token_no in self.connections):
+            self.connections[to_token_no] = {}
+        self.connections[from_token_no][to_token_no] = from_connection
+        self.connections[to_token_no][from_token_no] = to_connection
+        return from_connection
+
     async def _get_wallet_id(self, name):
         res = await self.agency_admin_GET("/multitenancy/wallets");
         if not ("results" in res):
@@ -106,52 +138,13 @@ class RedwitAgent(AriesAgent):
         return None
 
     async def setup_subagent_did(self):
+        self.connections = {}
+        self.tokenpool = {}
         self.subagent['sov'] = await self._create_did(self.subagent['wallet']['token'], "sov")
         self.subagent['key'] = await self._create_did(self.subagent['wallet']['token'], "key")
         return
 
-    async def setup_schema(self):
-        # identification schema
-        attrs = [
-        'uid',
-        'internal',
-        'group',
-        'military-id',
-        'name-ko',
-        'name-en',
-        'resident-number-head',
-        'resident-number-tail',
-        'branch',
-        'blood-type',
-        'grade',
-        'issuer',
-        'department',
-        'phone-additional',
-        'phone-mobile',
-        'entry-type',
-        'issue-date',
-        'honor-id',
-        'vehicles',
-        'additional-areas',
-        'start-date',
-        'end-date',
-        'escort-department',
-        'escort-grade',
-        'escort-name',
-        'escort-phone-additional',
-        'escort-phone-mobile',
-        'escort-objective',
-        ]
-        # which returns schema_id, credential_definition_id
-        s = await self.register_schema_and_creddef(
-                "pass_schema",
-                "1.0.0",
-                attrs
-            )
-        self.schema = s
-
     # TODO: check revocation is required or not
-    # not used
     async def setup_schemas(self):
         self.schemas = {}
 
@@ -179,7 +172,9 @@ class RedwitAgent(AriesAgent):
                 "1.0.0",
                 attrs
             )
-        self.schemas['identification'] = s
+        self.schemas['identification'] = {}
+        self.schemas['identification']['schema_id'] = s[0]
+        self.schemas['identification']['creddef_id'] = s[1]
 
         # pass schema
         attrs = [
@@ -197,7 +192,10 @@ class RedwitAgent(AriesAgent):
                 "1.0.0",
                 attrs
             )
-        self.schemas['pass'] = s
+        self.schemas['pass'] = {}
+        self.schemas['pass']['schema_id'] = s[0]
+        self.schemas['pass']['creddef_id'] = s[1]
+
 
     async def user_registration(self, name, key):
         data = {
@@ -241,10 +239,14 @@ class RedwitAgent(AriesAgent):
         # get did key
         debug_did_key = await self._get_did(debug_token, "key")
         log_msg("debug_did_key: "+debug_did_key)
+
+        connection = await self._get_connection(self.subagent['wallet']['token'], debug_token)
+        log_msg(self.subagent['wallet']['token'])
+        log_msg(debug_token)
+        log_msg(connection)
         return
 
-    async def user_issue_credential(self, name, key, data):
-
+    async def user_issue_identification(self, name, key, data):
         # get user wallet
         user_wallet_id = await self._get_wallet_id(name)
         if user_wallet_id == None:
@@ -259,134 +261,47 @@ class RedwitAgent(AriesAgent):
         user_did_key = await self._get_did(user_wallet_token, "key")
 
         # establish connection
-
+        connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
+        log_msg(self.subagent['wallet']['token'])
+        log_msg(user_wallet_token)
+        log_msg(connection_id)
 
         cred_preview = {
             "@type": CRED_PREVIEW_TYPE,
             "attributes": [
                 {"name": n, "value": v}
-                    for (n, v) in faber_agent.agent.cred_attrs[
-                    faber_agent.cred_def_id
-                ].items()
+                    for (n, v) in data.items()
             ],
         }
+        log_msg(self.schemas['identification']['creddef_id'])
         offer_request = {
-                            "connection_id": faber_agent.agent.connection_id,
-                            "comment": f"Offer on cred def id {faber_agent.cred_def_id}",
-                            "auto_remove": False,
-                            "credential_preview": cred_preview,
-                            "filter": {
-                                "indy": {"cred_def_id": faber_agent.cred_def_id}
-                            },
-                            "trace": exchange_tracing,
-                        }
-
-        cred_preview = {
-        "@type": "https://didcomm.org/issue-credential/2.0/credential-preview", # TODO: check this meaning
-        "attributes": [
-        {"name": n, "value": v}
-        for (n, v) in data.items()
-        ],
+            "connection_id": connection_id,
+            "comment": f"Offer on cred def id {self.schemas['identification']['creddef_id']}",
+            "auto_remove": False,
+            "credential_preview": cred_preview,
+            "filter": {
+                "indy": {
+                    "cred_def_id": self.schemas['identification']['creddef_id']
+                }
+            },
+            "trace": False,
         }
-
-        offer_request = {
-        "connection_id": self.connection_id,
-        "comment": f"Offer on cred def id {self.schemas['identification'][1]}",
-        "auto_remove": False,
-        "credential_preview": cred_preview,
-        "filter": {
-            "indy": {"cred_def_id": self.schemas['identification'][1]}
-        },
-        "trace": False,
-        }
-
-        # get wallet id
-        user = await self.agency_admin_GET("/multitenancy/wallets?wallet_name="+name)
-        err = not ('results' in user.keys())
-        if (err):
-            log_msg("Debug: REST API does not return result.")
-            return
-        if (len(user['results']) != 1):
-            log_msg("Debug: The results are move than one or empty.")
-            return
-        user_wallet_id = user['results'][0]['wallet_id']
-
-        # get user token
-        data = {
-        'wallet_key': key
-        }
-        res = await self.agency_admin_POST("/multitenancy/wallet/"+user_wallet_id+"/token", data=data)
-        user_wallet_token = res['token']
-
-        # get user did(key)
-
-        # get 
-
-
+        headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
+        await self.agency_admin_POST("/issue-credential-2.0/send-offer", data=offer_request, headers=headers)
         return
 
-    async def user_issue_identification(self, name, key, data):
-
-        if not self.schemas['identification']: # check tuple is empty
-            self.user_registration( name, key )
-        else:
-            log_msg( '[identification description]')
-            log_msg( self.schemas['identification'] )
-        cred_request = {
-        "@type": "https://didcomm.org/issue-credential/2.0/propose-credential", # TODO: check this meaning
-        "formats": [
-
-        ]
-        }
-
-        cred_preview = {
-        "@type": "https://didcomm.org/issue-credential/2.0/credential-preview", # TODO: check this meaning
-        "attributes": [
-        {"name": n, "value": v}
-        for (n, v) in data.items()
-        ],
-        }
-
-        offer_request = {
-        "connection_id": self.connection_id,
-        "comment": f"Offer on cred def id {self.schemas['identification'][1]}",
-        "auto_remove": False,
-        "credential_preview": cred_preview,
-        "filter": {
-            "indy": {"cred_def_id": self.schemas['identification'][1]}
-        },
-        "trace": False,
-        }
-
-        # get wallet id
-        user = await self.agency_admin_GET("/multitenancy/wallets?wallet_name="+name)
-        err = not ('results' in user.keys())
-        if (err):
-            log_msg("Debug: REST API does not return result.")
-            return
-        if (len(user['results']) != 1):
-            log_msg("Debug: The results are move than one or empty.")
-            return
-        user_wallet_id = user['results'][0]['wallet_id']
-
-        # get user token
-        data = {
-        'wallet_key': key
-        }
-        res = await self.agency_admin_POST("/multitenancy/wallet/"+user_wallet_id+"/token", data=data)
-        user_wallet_token = res['token']
-
-        # get user did(key)
-
-        # get 
-
-
-        return
-
+    # TODO
     async def user_issue_pass(self, name, key):
+        pass
         return
 
-    async def user_credential_proof(self, name, key):
+    # TODO
+    async def user_check_identification(self, name, key, asf):
+        pass
+        return
+
+    # TODO
+    async def user_check_pass(self, name, key, asf):
         pass
         return
 
@@ -442,7 +357,7 @@ async def main(args):
         redwit_agent.public_did = True
         await redwit_agent.initialize(the_agent=agent)
         await agent.setup_subagent_did()
-        await agent.setup_schema()
+        await agent.setup_schemas()
         await agent.init_webfront(8080)
 
         options = ""
@@ -455,7 +370,6 @@ async def main(args):
 
             if option is None or option in "xX":
                 break
-
             elif option in "wW":
                 await agent.user_registration("SAMPLE_USER_NAME", "SAMPLE_USER_KEY")
             elif option in "iI":
@@ -463,7 +377,7 @@ async def main(args):
                 # SAMPLE ID DATA
                 SAMPLE_ID_DATA = {
                 'uid': 'zyxwvu...',
-                'internal': True,
+                'internal': 'true',
                 'group': '1-1',
                 'military-id': '00-0000',
                 'name-ko': '성춘향',
@@ -476,7 +390,15 @@ async def main(args):
                 'issuer': '육군사관학교',
                 'department': 'A',
                 'phone-additional': '02-123-4567',
-                'phone-mobile': '010-2222-2222',
+                'phone-mobile': '010-2222-2222'
+                }
+
+                await agent.user_issue_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
+            elif option in "pP":
+
+                # SAMPLE ID DATA
+                SAMPLE_ID_DATA = {
+                'uid': 'zyxwvu...',
                 'entry-type': '',
                 'issue-date': '',
                 'honor-id': '',
@@ -492,7 +414,13 @@ async def main(args):
                 'escort-objective': ''
                 }
 
-                await agent.user_issue_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
+                await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "zyxwvu...")
+                await agent.user_issue_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
+            elif option in "eE":    # check identification
+                await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "SAMPLE_ID")
+            elif option in "eE":    # check pass
+                await agent.user_check_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "PASS VC 1")
+
 
         if redwit_agent.show_timing:
             timing = await redwit_agent.agent.fetch_timing()
