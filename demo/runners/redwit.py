@@ -21,6 +21,7 @@ from runners.support.utils import (  # noqa:E402
     check_requires,
     log_msg,
     log_status,
+    log_json,
     prompt,
     prompt_loop,
 )
@@ -64,6 +65,69 @@ class RedwitAgent(AriesAgent):
     def connection_ready(self):
         return self._connection_ready.done() and self._connection_ready.result()
 
+    # overrided on agent_container.py
+    async def handle_issue_credential_v2_0(self, message):
+        state = message["state"]
+        cred_ex_id = message["cred_ex_id"]
+        connection_id = message['connection_id']    # TODO: check if this is correct or opposite side connection id is correct
+        self.cred_ex_to_token[cred_ex_id] = self.connection_owner[connection_id]
+        prev_state = self.cred_state.get(cred_ex_id)
+        if prev_state == state:
+            return  # ignore
+        self.cred_state[cred_ex_id] = state
+
+        self.log(f"Credential: state = {state}, cred_ex_id = {cred_ex_id}")
+
+        if state == "request-received":
+            log_status("#17 Issue credential to X")
+            # issue credential based on offer preview in cred ex record
+            headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
+            await self.agency_admin_POST(
+                f"/issue-credential-2.0/records/{cred_ex_id}/issue",
+                {"comment": f"Issuing credential, exchange {cred_ex_id}"},
+                headers=headers
+            )
+        elif state == "offer-received":
+            log_status("#15 After receiving credential offer, send credential request")
+            if message["by_format"]["cred_offer"].get("indy"):
+                headers = self._attach_token_headers({}, self.cred_ex_to_token[cred_ex_id])
+                await self.agency_admin_POST(f"/issue-credential-2.0/records/{cred_ex_id}/send-request", headers=headers)
+        elif state == "done":
+            pass
+            # Logic moved to detail record specific handler
+
+    # overrided on agent_container.py
+    async def handle_issue_credential_v2_0_indy(self, message):
+        log_msg("Debug: handle_issue_credential_v2_0_indy.")
+        log_msg("Debug: cred_ex_id: "message["cred_ex_id"])
+        cred_ex_id = message["cred_ex_id"]
+
+        rev_reg_id = message.get("rev_reg_id")
+        cred_rev_id = message.get("cred_rev_id")
+        cred_id_stored = message.get("cred_id_stored")
+
+        if cred_id_stored:
+            cred_id = message["cred_id_stored"]
+            log_status(f"#18.1 Stored credential {cred_id} in wallet")
+            headers = self._attach_token_headers({}, self.cred_ex_to_token[cred_ex_id])
+            log_msg(self.cred_ex_to_token[cred_ex_id])
+            cred = await self.agency_admin_GET(f"/credential/{cred_id}", headers=headers)
+            log_json(cred, label="Credential details:")
+            self.log("credential_id", cred_id)
+            self.log("cred_def_id", cred["cred_def_id"])
+            self.log("schema_id", cred["schema_id"])
+            # track last successfully received credential
+            self.last_credential_received = cred
+
+        if rev_reg_id and cred_rev_id:
+            self.log(f"Revocation registry ID: {rev_reg_id}")
+            self.log(f"Credential revocation ID: {cred_rev_id}")
+
+    # overrided on agent_container.py
+    async def handle_issue_credential_v2_0_ld_proof(self, message):
+        log_msg("Debug: handle_issue_credential_v2_0_ld_proof called.")
+        pass
+
     def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
             "Bearer " + token
@@ -99,6 +163,8 @@ class RedwitAgent(AriesAgent):
             self.connections[to_token_no] = {}
         self.connections[from_token_no][to_token_no] = from_connection
         self.connections[to_token_no][from_token_no] = to_connection
+        self.connection_owner[from_connection] = from_token
+        self.connection_owner[to_connection] = to_token
         return from_connection
 
     async def _get_wallet_id(self, name):
@@ -123,7 +189,6 @@ class RedwitAgent(AriesAgent):
             data = {"method": "key", "options": {"key_type": "bls12381g2"}}
         headers = self._attach_token_headers({}, token)
         did_key = await self.agency_admin_POST("/wallet/did/create", data=data, headers=headers)
-        log_msg(did_key) # debug
         return did_key
 
     async def _get_did(self, token, did_type):
@@ -139,6 +204,8 @@ class RedwitAgent(AriesAgent):
 
     async def setup_subagent_did(self):
         self.connections = {}
+        self.connection_owner = {}
+        self.cred_ex_to_token = {}
         self.tokenpool = {}
         self.subagent['sov'] = await self._create_did(self.subagent['wallet']['token'], "sov")
         self.subagent['key'] = await self._create_did(self.subagent['wallet']['token'], "key")
@@ -232,18 +299,18 @@ class RedwitAgent(AriesAgent):
         # debug
         # get wallet id
         debug_wallet_id = await self._get_wallet_id(name)
-        log_msg("debug wallet id: "+debug_wallet_id)
+        log_msg("Debug: debug wallet id: "+debug_wallet_id)
         # get token
         debug_token = await self._get_token(debug_wallet_id, key)
-        log_msg("debug_token: "+debug_token)
+        log_msg("Debug: debug_token: "+debug_token)
         # get did key
         debug_did_key = await self._get_did(debug_token, "key")
-        log_msg("debug_did_key: "+debug_did_key)
+        log_msg("Debug: debug_did_key: "+debug_did_key)
 
         connection = await self._get_connection(self.subagent['wallet']['token'], debug_token)
-        log_msg(self.subagent['wallet']['token'])
-        log_msg(debug_token)
-        log_msg(connection)
+        log_msg("Debug: "+self.subagent['wallet']['token'])
+        log_msg("Debug: "+debug_token)
+        log_msg("Debug: "+connection)
         return
 
     async def user_issue_identification(self, name, key, data):
@@ -262,9 +329,9 @@ class RedwitAgent(AriesAgent):
 
         # establish connection
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
-        log_msg(self.subagent['wallet']['token'])
-        log_msg(user_wallet_token)
-        log_msg(connection_id)
+        log_msg("Debug: "+self.subagent['wallet']['token'])
+        log_msg("Debug: "+user_wallet_token)
+        log_msg("Debug: "+connection_id)
 
         cred_preview = {
             "@type": CRED_PREVIEW_TYPE,
@@ -273,7 +340,7 @@ class RedwitAgent(AriesAgent):
                     for (n, v) in data.items()
             ],
         }
-        log_msg(self.schemas['identification']['creddef_id'])
+        log_msg("Debug: "+self.schemas['identification']['creddef_id'])
         offer_request = {
             "connection_id": connection_id,
             "comment": f"Offer on cred def id {self.schemas['identification']['creddef_id']}",
