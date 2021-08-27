@@ -99,7 +99,7 @@ class RedwitAgent(AriesAgent):
     # overrided on agent_container.py
     async def handle_issue_credential_v2_0_indy(self, message):
         log_msg("Debug: handle_issue_credential_v2_0_indy.")
-        log_msg("Debug: cred_ex_id: "message["cred_ex_id"])
+        log_msg("Debug: cred_ex_id: "+message["cred_ex_id"])
         cred_ex_id = message["cred_ex_id"]
 
         rev_reg_id = message.get("rev_reg_id")
@@ -126,7 +126,154 @@ class RedwitAgent(AriesAgent):
     # overrided on agent_container.py
     async def handle_issue_credential_v2_0_ld_proof(self, message):
         log_msg("Debug: handle_issue_credential_v2_0_ld_proof called.")
+        log_msg(message)
         pass
+
+    # overrided on agent_container.py
+    async def handle_present_proof_v2_0(self, message):
+        log_msg("Debug: handle_present_proof_v2_0 called.")
+        log_msg(message)
+        return
+
+        state = message["state"]
+        pres_ex_id = message["pres_ex_id"]
+        self.log(f"Presentation: state = {state}, pres_ex_id = {pres_ex_id}")
+
+        if state == "request-received":
+            # prover role
+            log_status(
+                "#24 Query for credentials in the wallet that satisfy the proof request"
+            )
+            pres_request_indy = message["by_format"].get("pres_request", {}).get("indy")
+            pres_request_dif = message["by_format"].get("pres_request", {}).get("dif")
+
+            if pres_request_indy:
+                # include self-attested attributes (not included in credentials)
+                creds_by_reft = {}
+                revealed = {}
+                self_attested = {}
+                predicates = {}
+
+                try:
+                    # select credentials to provide for the proof
+                    creds = await self.admin_GET(
+                        f"/present-proof-2.0/records/{pres_ex_id}/credentials"
+                    )
+                    if creds:
+                        if "timestamp" in creds[0]["cred_info"]["attrs"]:
+                            sorted_creds = sorted(
+                                creds,
+                                key=lambda c: int(c["cred_info"]["attrs"]["timestamp"]),
+                                reverse=True,
+                            )
+                        else:
+                            sorted_creds = creds
+                        for row in sorted_creds:
+                            for referent in row["presentation_referents"]:
+                                if referent not in creds_by_reft:
+                                    creds_by_reft[referent] = row
+
+                    for referent in pres_request_indy["requested_attributes"]:
+                        if referent in creds_by_reft:
+                            revealed[referent] = {
+                                "cred_id": creds_by_reft[referent]["cred_info"][
+                                    "referent"
+                                ],
+                                "revealed": True,
+                            }
+                        else:
+                            self_attested[referent] = "my self-attested value"
+
+                    for referent in pres_request_indy["requested_predicates"]:
+                        if referent in creds_by_reft:
+                            predicates[referent] = {
+                                "cred_id": creds_by_reft[referent]["cred_info"][
+                                    "referent"
+                                ]
+                            }
+
+                    log_status("#25 Generate the proof")
+                    request = {
+                        "indy": {
+                            "requested_predicates": predicates,
+                            "requested_attributes": revealed,
+                            "self_attested_attributes": self_attested,
+                        }
+                    }
+                except ClientError:
+                    pass
+
+            elif pres_request_dif:
+                try:
+                    # select credentials to provide for the proof
+                    creds = await self.admin_GET(
+                        f"/present-proof-2.0/records/{pres_ex_id}/credentials"
+                    )
+                    if creds and 0 < len(creds):
+                        creds = sorted(
+                            creds,
+                            key=lambda c: c["issuanceDate"],
+                            reverse=True,
+                        )
+                        record_id = creds[0]["record_id"]
+                    else:
+                        record_id = None
+
+                    log_status("#25 Generate the proof")
+                    request = {
+                        "dif": {},
+                    }
+                    # specify the record id for each input_descriptor id:
+                    request["dif"]["record_ids"] = {}
+                    for input_descriptor in pres_request_dif["presentation_definition"][
+                        "input_descriptors"
+                    ]:
+                        request["dif"]["record_ids"][input_descriptor["id"]] = [
+                            record_id,
+                        ]
+                    log_msg("presenting ld-presentation:", request)
+
+                    # NOTE that the holder/prover can also/or specify constraints by including the whole proof request
+                    # and constraining the presented credentials by adding filters, for example:
+                    #
+                    # request = {
+                    #     "dif": pres_request_dif,
+                    # }
+                    # request["dif"]["presentation_definition"]["input_descriptors"]["constraints"]["fields"].append(
+                    #      {
+                    #          "path": [
+                    #              "$.id"
+                    #          ],
+                    #          "purpose": "Specify the id of the credential to present",
+                    #          "filter": {
+                    #              "const": "https://credential.example.com/residents/1234567890"
+                    #          }
+                    #      }
+                    # )
+                    #
+                    # (NOTE the above assumes the credential contains an "id", which is an optional field)
+
+                except ClientError:
+                    pass
+
+            else:
+                raise Exception("Invalid presentation request received")
+
+            log_status("#26 Send the proof to X: " + json.dumps(request))
+            await self.admin_POST(
+                f"/present-proof-2.0/records/{pres_ex_id}/send-presentation",
+                request,
+            )
+
+        elif state == "presentation-received":
+            # verifier role
+            log_status("#27 Process the proof provided by X")
+            log_status("#28 Check if proof is valid")
+            proof = await self.admin_POST(
+                f"/present-proof-2.0/records/{pres_ex_id}/verify-presentation"
+            )
+            self.log("Proof =", proof["verified"])
+            self.last_proof_received = proof
 
     def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
@@ -364,8 +511,114 @@ class RedwitAgent(AriesAgent):
 
     # TODO
     async def user_check_identification(self, name, key, asf):
-        pass
-        return
+        # get user wallet
+        user_wallet_id = await self._get_wallet_id(name)
+        if user_wallet_id == None:
+            log_msg("Debug: user not exists")
+            return None
+        user_wallet_token = await self._get_token(user_wallet_id, key)
+        if user_wallet_token == None:
+            # TODO: catch error
+            return None
+
+        # get user's did key
+        user_did_key = await self._get_did(user_wallet_token, "key")
+
+        # establish connection
+        connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
+
+        attrs = [
+        'resident-number-head',
+        'resident-number-tail',
+        'branch',
+        'blood-type',
+        'grade',
+        'issuer',
+        'department',
+        'phone-additional',
+        'phone-mobile'
+        ]
+        req_attrs = [
+            {
+                "name": "uid",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "internal",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "group",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "military-id",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "name-ko",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "name-en",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "resident-number-head",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "resident-number-tail",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "branch",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "blood-type",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "grade",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "issuer",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "department",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "phone-additional",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+            {
+                "name": "phone-mobile",
+                "restrictions": [{"schema_name": "id_schema"}],
+            },
+        ]
+        indy_proof_request = {
+            "name": "Proof of Identification",
+            "version": "1.0",
+            "requested_attributes": {
+                f"0_{req_attr['name']}_uuid": req_attr
+                for req_attr in req_attrs
+            },
+        }
+        proof_request_web_request = {
+            "connection_id": connection_id,
+            "presentation_request": {"indy": indy_proof_request},
+            "trace": False,
+        }
+        headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
+        await self.agency_admin_POST(
+            "/present-proof-2.0/send-request",
+            proof_request_web_request,
+            headers=headers
+        )
 
     # TODO
     async def user_check_pass(self, name, key, asf):
@@ -430,6 +683,7 @@ async def main(args):
         options = ""
         options += "    (W) DEBUG user_registration\n"
         options += "    (I) DEBUG user_issue_identification\n"
+        options += "    (C) DEBUG user_check_identification\n"
         options += "    (X) Exit?\n "
         async for option in prompt_loop(options):
             if option is not None:
@@ -462,30 +716,32 @@ async def main(args):
 
                 await agent.user_issue_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
             elif option in "pP":
+                pass # TODO: implement
+                # # SAMPLE ID DATA
+                # SAMPLE_ID_DATA = {
+                # 'uid': 'zyxwvu...',
+                # 'entry-type': '',
+                # 'issue-date': '',
+                # 'honor-id': '',
+                # 'vehicles': '',
+                # 'additional-areas': '',
+                # 'start-date': '',
+                # 'end-date': '',
+                # 'escort-department': '',
+                # 'escort-grade': '',
+                # 'escort-name': '',
+                # 'escort-phone-additional': '',
+                # 'escort-phone-mobile': '',
+                # 'escort-objective': ''
+                # }
 
-                # SAMPLE ID DATA
-                SAMPLE_ID_DATA = {
-                'uid': 'zyxwvu...',
-                'entry-type': '',
-                'issue-date': '',
-                'honor-id': '',
-                'vehicles': '',
-                'additional-areas': '',
-                'start-date': '',
-                'end-date': '',
-                'escort-department': '',
-                'escort-grade': '',
-                'escort-name': '',
-                'escort-phone-additional': '',
-                'escort-phone-mobile': '',
-                'escort-objective': ''
-                }
-
-                await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "zyxwvu...")
-                await agent.user_issue_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
-            elif option in "eE":    # check identification
+                # await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "zyxwvu...")
+                # await agent.user_issue_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
+            elif option in "cC":    # check identification
+                pass # TODO: implement
                 await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "SAMPLE_ID")
             elif option in "eE":    # check pass
+                pass # TODO: implement
                 await agent.user_check_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "PASS VC 1")
 
 
