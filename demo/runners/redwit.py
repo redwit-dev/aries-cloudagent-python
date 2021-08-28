@@ -70,6 +70,7 @@ class RedwitAgent(AriesAgent):
         state = message["state"]
         cred_ex_id = message["cred_ex_id"]
         connection_id = message['connection_id']    # TODO: check if this is correct or opposite side connection id is correct
+        log_msg("Debug: connection id: "+connection_id)
         self.cred_ex_to_token[cred_ex_id] = self.connection_owner[connection_id]
         prev_state = self.cred_state.get(cred_ex_id)
         if prev_state == state:
@@ -79,6 +80,8 @@ class RedwitAgent(AriesAgent):
         self.log(f"Credential: state = {state}, cred_ex_id = {cred_ex_id}")
 
         if state == "request-received":
+            log_msg("Debug: Assertion:")
+            log_msg(self.cred_ex_to_token[cred_ex_id] == self.subagent['wallet']['token'])
             log_status("#17 Issue credential to X")
             # issue credential based on offer preview in cred ex record
             headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
@@ -88,6 +91,8 @@ class RedwitAgent(AriesAgent):
                 headers=headers
             )
         elif state == "offer-received":
+            log_msg("Debug: Assertion:")
+            log_msg(self.cred_ex_to_token[cred_ex_id] != self.subagent['wallet']['token'])
             log_status("#15 After receiving credential offer, send credential request")
             if message["by_format"]["cred_offer"].get("indy"):
                 headers = self._attach_token_headers({}, self.cred_ex_to_token[cred_ex_id])
@@ -108,6 +113,8 @@ class RedwitAgent(AriesAgent):
 
         if cred_id_stored:
             cred_id = message["cred_id_stored"]
+            log_msg("Debug: Assertion:")
+            log_msg(self.cred_ex_to_token[cred_ex_id] != self.subagent['wallet']['token'])
             log_status(f"#18.1 Stored credential {cred_id} in wallet")
             headers = self._attach_token_headers({}, self.cred_ex_to_token[cred_ex_id])
             log_msg(self.cred_ex_to_token[cred_ex_id])
@@ -124,22 +131,22 @@ class RedwitAgent(AriesAgent):
             self.log(f"Credential revocation ID: {cred_rev_id}")
 
     # overrided on agent_container.py
-    async def handle_issue_credential_v2_0_ld_proof(self, message):
-        log_msg("Debug: handle_issue_credential_v2_0_ld_proof called.")
-        log_msg(message)
-        pass
-
-    # overrided on agent_container.py
     async def handle_present_proof_v2_0(self, message):
         log_msg("Debug: handle_present_proof_v2_0 called.")
-        log_msg(message)
-        return
 
         state = message["state"]
         pres_ex_id = message["pres_ex_id"]
+
+        connection_id = message['connection_id']    # TODO: check if this is correct or opposite side connection id is correct
+        log_msg("Debug: connection id: "+connection_id)
+        self.pres_ex_to_token[pres_ex_id] = self.connection_owner[connection_id]
+
         self.log(f"Presentation: state = {state}, pres_ex_id = {pres_ex_id}")
 
         if state == "request-received":
+            log_msg("Debug: Assertion:")
+            log_msg(self.pres_ex_to_token[pres_ex_id] != self.subagent['wallet']['token'])
+            log_msg("Debug: token: "+self.pres_ex_to_token[pres_ex_id])
             # prover role
             log_status(
                 "#24 Query for credentials in the wallet that satisfy the proof request"
@@ -156,8 +163,10 @@ class RedwitAgent(AriesAgent):
 
                 try:
                     # select credentials to provide for the proof
-                    creds = await self.admin_GET(
-                        f"/present-proof-2.0/records/{pres_ex_id}/credentials"
+                    headers = self._attach_token_headers({}, self.pres_ex_to_token[pres_ex_id])
+                    creds = await self.agency_admin_GET(
+                        f"/present-proof-2.0/records/{pres_ex_id}/credentials",
+                        headers=headers
                     )
                     if creds:
                         if "timestamp" in creds[0]["cred_info"]["attrs"]:
@@ -206,8 +215,10 @@ class RedwitAgent(AriesAgent):
             elif pres_request_dif:
                 try:
                     # select credentials to provide for the proof
-                    creds = await self.admin_GET(
-                        f"/present-proof-2.0/records/{pres_ex_id}/credentials"
+                    headers = self._attach_token_headers({}, self.pres_ex_to_token[pres_ex_id])
+                    creds = await self.agency_admin_GET(
+                        f"/present-proof-2.0/records/{pres_ex_id}/credentials",
+                        headers=headers
                     )
                     if creds and 0 < len(creds):
                         creds = sorted(
@@ -260,17 +271,23 @@ class RedwitAgent(AriesAgent):
                 raise Exception("Invalid presentation request received")
 
             log_status("#26 Send the proof to X: " + json.dumps(request))
-            await self.admin_POST(
+            headers = self._attach_token_headers({}, self.pres_ex_to_token[pres_ex_id])
+            await self.agency_admin_POST(
                 f"/present-proof-2.0/records/{pres_ex_id}/send-presentation",
                 request,
+                headers=headers
             )
 
         elif state == "presentation-received":
+            log_msg("Debug: Assertion:")
+            log_msg(self.pres_ex_to_token[pres_ex_id] == self.subagent['wallet']['token'])
             # verifier role
             log_status("#27 Process the proof provided by X")
             log_status("#28 Check if proof is valid")
-            proof = await self.admin_POST(
-                f"/present-proof-2.0/records/{pres_ex_id}/verify-presentation"
+            headers = self._attach_token_headers({}, self.pres_ex_to_token[pres_ex_id])
+            proof = await self.agency_admin_POST(
+                f"/present-proof-2.0/records/{pres_ex_id}/verify-presentation",
+                headers=headers
             )
             self.log("Proof =", proof["verified"])
             self.last_proof_received = proof
@@ -353,6 +370,7 @@ class RedwitAgent(AriesAgent):
         self.connections = {}
         self.connection_owner = {}
         self.cred_ex_to_token = {}
+        self.pres_ex_to_token = {}
         self.tokenpool = {}
         self.subagent['sov'] = await self._create_did(self.subagent['wallet']['token'], "sov")
         self.subagent['key'] = await self._create_did(self.subagent['wallet']['token'], "key")
@@ -527,17 +545,6 @@ class RedwitAgent(AriesAgent):
         # establish connection
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
 
-        attrs = [
-        'resident-number-head',
-        'resident-number-tail',
-        'branch',
-        'blood-type',
-        'grade',
-        'issuer',
-        'department',
-        'phone-additional',
-        'phone-mobile'
-        ]
         req_attrs = [
             {
                 "name": "uid",
@@ -600,12 +607,19 @@ class RedwitAgent(AriesAgent):
                 "restrictions": [{"schema_name": "id_schema"}],
             },
         ]
+        req_preds = [
+            # test zero-knowledge proofs
+        ]
         indy_proof_request = {
             "name": "Proof of Identification",
             "version": "1.0",
             "requested_attributes": {
                 f"0_{req_attr['name']}_uuid": req_attr
                 for req_attr in req_attrs
+            },
+            "requested_predicates": {
+                f"0_{req_pred['name']}_GE_uuid": req_pred
+                for req_pred in req_preds
             },
         }
         proof_request_web_request = {
