@@ -8,6 +8,7 @@ import time
 from aiohttp import (
     web,
     ClientError,
+    ClientSession
 )
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -476,7 +477,7 @@ class RedwitAgent(AriesAgent):
         log_msg("Debug: "+self.subagent['wallet']['token'])
         log_msg("Debug: "+debug_token)
         log_msg("Debug: "+connection)
-        return
+        return debug_did_key
 
     async def user_issue_identification(self, name, key, data):
         # get user wallet
@@ -491,12 +492,12 @@ class RedwitAgent(AriesAgent):
 
         # get user's did key
         user_did_key = await self._get_did(user_wallet_token, "key")
-
+        log_msg("Debug[user_did_key]: "+user_did_key)
         # establish connection
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
-        log_msg("Debug: "+self.subagent['wallet']['token'])
-        log_msg("Debug: "+user_wallet_token)
-        log_msg("Debug: "+connection_id)
+        log_msg("Debug[token]: "+self.subagent['wallet']['token'])
+        log_msg("Debug[wallet_token]: "+user_wallet_token)
+        log_msg("Debug[connection_id]: "+connection_id)
 
         cred_preview = {
             "@type": CRED_PREVIEW_TYPE,
@@ -505,7 +506,7 @@ class RedwitAgent(AriesAgent):
                     for (n, v) in data.items()
             ],
         }
-        log_msg("Debug: "+self.schemas['identification']['creddef_id'])
+        log_msg("Debug[creddef_id]: "+self.schemas['identification']['creddef_id'])
         offer_request = {
             "connection_id": connection_id,
             "comment": f"Offer on cred def id {self.schemas['identification']['creddef_id']}",
@@ -519,8 +520,10 @@ class RedwitAgent(AriesAgent):
             "trace": False,
         }
         headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
-        await self.agency_admin_POST("/issue-credential-2.0/send-offer", data=offer_request, headers=headers)
-        return
+        res = await self.agency_admin_POST("/issue-credential-2.0/send-offer", data=offer_request, headers=headers)
+        rtn = json.dumps(res)
+
+        return rtn
 
     # TODO
     async def user_issue_pass(self, name, key):
@@ -646,6 +649,38 @@ class RedwitAgent(AriesAgent):
         resp_obj = {'status': 'success'}
         return web.Response(text=json.dumps(resp_obj))
 
+    async def _handle_register_user(self, request: web.BaseRequest):
+        body = await request.json()
+        json_body = json.loads( body )
+        name = json_body.get("name")
+        key = json_body.get("key")
+        try:
+            did = await self.user_registration( name, key )
+            resp_obj = { 'did' : did, 'status': 'success' }
+            return web.json_response(resp_obj)
+        except ClientError:
+            log_msg( ClientError )
+            resp_obj = { 'status': 'failed', 'msg': ClientError }
+            return web.json_response(resp_obj)
+
+    async def _handle_issue_identification(self, request: web.BaseRequest):
+        body = await request.json()
+        json_body = json.loads( body )
+        name = json_body.get("name")
+        key = json_body.get("key")
+        log_msg( 'UserInfo: ' + name + key )
+        del json_body["name"]
+        del json_body["key"]
+        try:
+            res = await self.user_issue_identification( name, key , json_body)
+            log_msg( res )
+            resp_obj = { 'vc' : res, 'status': 'success' }
+            return web.json_response(resp_obj)
+        except ClientError:
+            log_msg( ClientError )
+            resp_obj = { 'status': 'failed', 'msg': ClientError }
+            return web.json_response(resp_obj)
+
     async def init_webfront(self, webfront_port):
         self.webfront_port = webfront_port
         webfront = web.Application()
@@ -654,6 +689,8 @@ class RedwitAgent(AriesAgent):
         webfront.add_routes([
             web.get('/', self._handle_webfront_get_default),
             web.post('/', self._handle_webfront_post_default),
+            web.post('/register', self._handle_register_user),
+            web.post('/issue/identification', self._handle_issue_identification),
         ])
 
         runner = web.AppRunner(webfront)
@@ -694,6 +731,43 @@ async def main(args):
         await agent.setup_schemas()
         await agent.init_webfront(8080)
 
+
+        # test local server
+        async with ClientSession() as session:
+            url='http://localhost:8080/register'
+            payload = { 'name' : 'any00', 'key': 'pass1234'}
+            headers = {'content-type': 'application/json'}
+            async with session.post( url, json=json.dumps(payload), headers=headers ) as resp:
+                log_msg(resp.status)
+                log_msg(await resp.text())
+        await asyncio.sleep(1)
+        async with ClientSession() as session:
+            url='http://localhost:8080/issue/identification'
+            # TODO : token based authentication
+            SAMPLE_ID_DATA = {
+                'name' : 'any00', 'key': 'pass1234', # for authentication
+                'uid': 'zyxwvu...',
+                'internal': 'true',
+                'group': '1-1',
+                'military-id': '00-0000',
+                'name-ko': '성춘향',
+                'name-en': 'Seong Chun Hyang',
+                'resident-number-head': '981212',
+                'resident-number-tail': '1234567',
+                'branch': 'ARTILLERY',
+                'blood-type': 'O',
+                'grade': 'ARMY-O-3',
+                'issuer': '육군사관학교',
+                'department': 'A',
+                'phone-additional': '02-123-4567',
+                'phone-mobile': '010-2222-2222'
+                }
+            headers = {'content-type': 'application/json'}
+            async with session.post( url, json=json.dumps(SAMPLE_ID_DATA), headers=headers ) as resp:
+                log_msg(resp.status)
+                log_msg(await resp.text())
+
+        
         options = ""
         options += "    (W) DEBUG user_registration\n"
         options += "    (I) DEBUG user_issue_identification\n"
