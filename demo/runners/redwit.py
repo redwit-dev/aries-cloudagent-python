@@ -95,6 +95,9 @@ class RedwitAgent(AriesAgent):
             log_msg("Debug: Assertion:")
             log_msg(self.cred_ex_to_token[cred_ex_id] != self.subagent['wallet']['token'])
             log_status("#15 After receiving credential offer, send credential request")
+
+            self.cred_waitings[cred_ex_id] = message['by_format']['cred_offer']['indy']['nonce']
+
             if message["by_format"]["cred_offer"].get("indy"):
                 headers = self._attach_token_headers({}, self.cred_ex_to_token[cred_ex_id])
                 await self.agency_admin_POST(f"/issue-credential-2.0/records/{cred_ex_id}/send-request", headers=headers)
@@ -126,6 +129,10 @@ class RedwitAgent(AriesAgent):
             self.log("schema_id", cred["schema_id"])
             # track last successfully received credential
             self.last_credential_received = cred
+
+            cred_offer_nonce = self.cred_waitings[cred_ex_id]
+            self.waitings[cred_offer_nonce] = cred
+            del self.cred_waitings[cred_ex_id]
 
         if rev_reg_id and cred_rev_id:
             self.log(f"Revocation registry ID: {rev_reg_id}")
@@ -521,7 +528,16 @@ class RedwitAgent(AriesAgent):
         }
         headers = self._attach_token_headers({}, self.subagent['wallet']['token'])
         res = await self.agency_admin_POST("/issue-credential-2.0/send-offer", data=offer_request, headers=headers)
-        rtn = json.dumps(res)
+        
+        # busy polling
+        cred_offer_nonce = res['by_format']['cred_offer']['indy']['nonce']
+        while(not (cred_offer_nonce in self.waitings)):
+            await asyncio.sleep(1)
+        cred = self.waitings[cred_offer_nonce]
+        del self.waitings[cred_offer_nonce]
+        log_msg(cred)
+
+        rtn = json.dumps({})
 
         return rtn
 
@@ -729,6 +745,10 @@ async def main(args):
         await redwit_agent.initialize(the_agent=agent)
         await agent.setup_subagent_did()
         await agent.setup_schemas()
+
+        agent.waitings = {}
+        agent.cred_waitings = {}
+
         await agent.init_webfront(8080)
 
 
