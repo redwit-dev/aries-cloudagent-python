@@ -535,9 +535,7 @@ class RedwitAgent(AriesAgent):
             await asyncio.sleep(1)
         cred = self.waitings[cred_offer_nonce]
         del self.waitings[cred_offer_nonce]
-        log_msg(cred)
-
-        rtn = json.dumps({})
+        rtn = json.dumps(cred)
 
         return rtn
 
@@ -547,7 +545,7 @@ class RedwitAgent(AriesAgent):
         return
 
     # TODO
-    async def user_check_identification(self, name, key, asf):
+    async def user_check_identification(self, name, key, vc_id):
         # get user wallet
         user_wallet_id = await self._get_wallet_id(name)
         if user_wallet_id == None:
@@ -697,6 +695,25 @@ class RedwitAgent(AriesAgent):
             resp_obj = { 'status': 'failed', 'msg': ClientError }
             return web.json_response(resp_obj)
 
+    async def _handle_check_identification(self, request: web.BaseRequest):
+        body = await request.json()
+        json_body = json.loads( body )
+        name = json_body.get("name")
+        key = json_body.get("key")
+        cred_id = json_body.get("cred_id")
+        log_msg( 'UserInfo: ' + name + key + cred_id)
+        del json_body["name"]
+        del json_body["key"]
+        try:
+            res = await self.user_check_identification( name, key , cred_id)
+            log_msg( res )
+            resp_obj = { 'vc' : res, 'status': 'success' }
+            return web.json_response(resp_obj)
+        except ClientError:
+            log_msg( ClientError )
+            resp_obj = { 'status': 'failed', 'msg': ClientError }
+            return web.json_response(resp_obj)
+
     async def init_webfront(self, webfront_port):
         self.webfront_port = webfront_port
         webfront = web.Application()
@@ -707,6 +724,7 @@ class RedwitAgent(AriesAgent):
             web.post('/', self._handle_webfront_post_default),
             web.post('/register', self._handle_register_user),
             web.post('/issue/identification', self._handle_issue_identification),
+            web.post('/check/identification', self._handle_check_identification),
         ])
 
         runner = web.AppRunner(webfront)
@@ -761,6 +779,7 @@ async def main(args):
                 log_msg(resp.status)
                 log_msg(await resp.text())
         await asyncio.sleep(1)
+        cred_id = ""
         async with ClientSession() as session:
             url='http://localhost:8080/issue/identification'
             # TODO : token based authentication
@@ -785,9 +804,20 @@ async def main(args):
             headers = {'content-type': 'application/json'}
             async with session.post( url, json=json.dumps(SAMPLE_ID_DATA), headers=headers ) as resp:
                 log_msg(resp.status)
+                resp_str = await resp.text()
+                resp_obj = json.loads(resp_str)['vc']
+                cred_id = json.loads(resp_obj)['referent']
+        async with ClientSession() as session:
+            url='http://localhost:8080/check/identification'
+            # TODO : token based authentication
+            json_data = {
+                'name' : 'any00', 'key': 'pass1234', 'cred_id': cred_id, # for authentication
+                }
+            headers = {'content-type': 'application/json'}
+            async with session.post( url, json=json.dumps(json_data), headers=headers ) as resp:
+                log_msg(resp.status)
                 log_msg(await resp.text())
 
-        
         options = ""
         options += "    (W) DEBUG user_registration\n"
         options += "    (I) DEBUG user_issue_identification\n"
