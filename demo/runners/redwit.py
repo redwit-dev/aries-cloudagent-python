@@ -30,6 +30,9 @@ from runners.support.utils import (  # noqa:E402
 CRED_PREVIEW_TYPE = "https://didcomm.org/issue-credential/2.0/credential-preview"
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 
+# TODO: suggested on 210905
+EXPIRATION_PERIOD_SEC = 30    # 30 seconds expiration for test
+
 logging.basicConfig(level=logging.WARNING)
 LOGGER = logging.getLogger(__name__)
 
@@ -404,7 +407,9 @@ class RedwitAgent(AriesAgent):
         'issuer',
         'department',
         'phone-additional',
-        'phone-mobile'
+        'phone-mobile',
+        # TODO: suggested on 210905
+        'expirationDate'
         ]
         # which returns schema_id, credential_definition_id
         s = await self.register_schema_and_creddef(
@@ -626,6 +631,13 @@ class RedwitAgent(AriesAgent):
         ]
         req_preds = [
             # test zero-knowledge proofs
+            # TODO: suggested on 210905
+            {
+                "name": "expirationDate",
+                "p_type": ">=",
+                "p_value": int(time.time()),
+                "restrictions": [{"schema_name": "id_schema"}],
+            }
         ]
         indy_proof_request = {
             "name": "Proof of Identification",
@@ -799,7 +811,9 @@ async def main(args):
                 'issuer': '육군사관학교',
                 'department': 'A',
                 'phone-additional': '02-123-4567',
-                'phone-mobile': '010-2222-2222'
+                'phone-mobile': '010-2222-2222',
+                # TODO: suggested on 210905
+                'expirationDate': str(int(time.time()) + EXPIRATION_PERIOD_SEC)
                 }
             headers = {'content-type': 'application/json'}
             async with session.post( url, json=json.dumps(SAMPLE_ID_DATA), headers=headers ) as resp:
@@ -849,7 +863,9 @@ async def main(args):
                 'issuer': '육군사관학교',
                 'department': 'A',
                 'phone-additional': '02-123-4567',
-                'phone-mobile': '010-2222-2222'
+                'phone-mobile': '010-2222-2222',
+                # TODO: suggested on 210905
+                'expirationDate': str(int(time.time()) + EXPIRATION_PERIOD_SEC)
                 }
 
                 await agent.user_issue_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
@@ -877,7 +893,7 @@ async def main(args):
                 # await agent.user_issue_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", SAMPLE_ID_DATA)
             elif option in "cC":    # check identification
                 pass # TODO: implement
-                await agent.user_check_identification("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "SAMPLE_ID")
+                await agent.user_check_identification('any00', 'pass1234', "SAMPLE_ID")
             elif option in "eE":    # check pass
                 pass # TODO: implement
                 await agent.user_check_pass("SAMPLE_USER_NAME", "SAMPLE_USER_KEY", "PASS VC 1")
