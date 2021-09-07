@@ -807,6 +807,8 @@ async def main(args):
                 resp_str = await resp.text()
                 resp_obj = json.loads(resp_str)['vc']
                 cred_id = json.loads(resp_obj)['referent']
+                log_msg( '*************Verifiable Credential***********' )
+                log_msg( resp_str )
         async with ClientSession() as session:
             url='http://localhost:8080/check/identification'
             # TODO : token based authentication
