@@ -840,7 +840,7 @@ class RedwitAgent(AriesAgent):
         try:
             res = await self.user_check_identification( name, key )
             log_msg( res )
-            resp_obj = { 'vc' : res, 'status': 'success' }
+            resp_obj = { 'vp' : res, 'status': 'success' }
             return web.json_response(resp_obj)
         except ClientError:
             log_msg( ClientError )
