@@ -301,8 +301,16 @@ class RedwitAgent(AriesAgent):
                 headers=headers
             )
             self.log("Proof =", proof["verified"])
+            self.log(message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attrs"]["0_uid_uuid"]['raw'])
             self.last_proof_received = proof
-            self.pres_waitings[pres_ex_id] = (proof["verified"] == "true")
+
+            if proof["verified"] == "true":
+                uid = message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attrs"]["0_uid_uuid"]['raw']
+                pres_waiting_result = {"result": True, "uid": uid}
+                self.pres_waitings[pres_ex_id] = pres_waiting_result
+            else:
+                pres_waiting_result = {"result": False}
+                self.pres_waitings[pres_ex_id] = pres_waiting_result
 
     def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
@@ -424,6 +432,7 @@ class RedwitAgent(AriesAgent):
 
         # pass schema
         attrs = [
+        'uid',
         'entry-type',
         'issue-date',
         'honor-id',
@@ -605,16 +614,16 @@ class RedwitAgent(AriesAgent):
 
         return rtn
 
-    async def user_check_identification(self, name, key):
+    async def user_check_identification(self, name, key, uid=None):
         # get user wallet
         user_wallet_id = await self._get_wallet_id(name)
         if user_wallet_id == None:
             log_msg("Debug: user not exists")
-            return None
+            return {"result": False}
         user_wallet_token = await self._get_token(user_wallet_id, key)
         if user_wallet_token == None:
             # TODO: catch error
-            return None
+            return {"result": False}
 
         # get user's did key
         user_did_key = await self._get_did(user_wallet_token, "key")
@@ -622,10 +631,14 @@ class RedwitAgent(AriesAgent):
         # establish connection
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
 
+        restriction = {}
+        restriction["schema_name"] = "id_schema"
+        if uid != None:
+            restriction["attr::uid::value"] = uid
         req_attrs = [
             {
                 "name": "uid",
-                "restrictions": [{"schema_name": "id_schema"}],
+                "restrictions": [restriction],
             },
             {
                 "name": "internal",
@@ -724,24 +737,21 @@ class RedwitAgent(AriesAgent):
         pres_ex_id = res['pres_ex_id']
         while(not (pres_ex_id in self.pres_waitings)):
             await asyncio.sleep(1)
-        proof_check = self.pres_waitings[pres_ex_id]
+        proof_check_result = self.pres_waitings[pres_ex_id]
 
-        return proof_check
+        return proof_check_result
 
-    # TODO
+    # TODO: uid check implementation
     async def user_check_pass(self, name, key, entry_type=None):
-        # This function is not fully implemented.
-        return True
-
         # get user wallet
         user_wallet_id = await self._get_wallet_id(name)
         if user_wallet_id == None:
             log_msg("Debug: user not exists")
-            return None
+            return {"result": False}
         user_wallet_token = await self._get_token(user_wallet_id, key)
         if user_wallet_token == None:
             # TODO: catch error
-            return None
+            return {"result": False}
 
         # get user's did key
         user_did_key = await self._get_did(user_wallet_token, "key")
@@ -749,8 +759,68 @@ class RedwitAgent(AriesAgent):
         # establish connection
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
 
+
+        restriction = {}
+        restriction["schema_name"] = "pass_schema"
+        if entry_type != None:
+            restriction["attr::entry-type::value"] = entry_type
         req_attrs = [
-            # TODO: fill this
+            {
+                "name": "uid",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "entry-type",
+                "restrictions": [restriction],
+            },
+            {
+                "name": "issue-date",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "honor-id",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "vehicles",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "additional-areas",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "start-date",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "end-date",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "escort-department",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "escort-grade",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "escort-name",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "escort-phone-additional",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "escort-phone-mobile",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
+            {
+                "name": "objective",
+                "restrictions": [{"schema_name": "pass_schema"}],
+            },
         ]
         req_preds = [
             # TODO: fill this
@@ -785,9 +855,9 @@ class RedwitAgent(AriesAgent):
         pres_ex_id = res['pres_ex_id']
         while(not (pres_ex_id in self.pres_waitings)):
             await asyncio.sleep(1)
-        proof_check = self.pres_waitings[pres_ex_id]
+        proof_check_result = self.pres_waitings[pres_ex_id]
 
-        return proof_check
+        return proof_check_result
 
     async def _handle_webfront_get_default(self, request):
         resp_obj = {'status': 'success'}
@@ -961,6 +1031,7 @@ async def main(args):
         options += "    (I) DEBUG user_issue_identification\n"
         options += "    (C) DEBUG user_check_identification\n"
         options += "    (P) DEBUG user_issue_pass\n"
+        options += "    (E) DEBUG user_check_pass\n"
         options += "    (X) Exit?\n "
         async for option in prompt_loop(options):
             if option is not None:
@@ -996,39 +1067,44 @@ async def main(args):
                 await agent.user_issue_identification('any00', 'pass1234', SAMPLE_ID_DATA)
             elif option in "pP":
 
-                # SAMPLE ID DATA
-                SAMPLE_PASS_DATA = {
-                'entry-type': '1-1',
-                'issue-date': '2021-08-23 23:45:01',
-                'honor-id': '',
-                'vehicles': '',
-                'additional-areas': '',
-                'start-date': '',
-                'end-date': '',
-                'escort-department': '',
-                'escort-grade': '',
-                'escort-name': '',
-                'escort-phone-additional': '',
-                'escort-phone-mobile': '',
-                'objective': ''
-                }
-
                 id_check = await agent.user_check_identification('any00', 'pass1234')
-                if id_check:
+                if id_check['result']:
+                    # SAMPLE ID DATA
+                    SAMPLE_PASS_DATA = {
+                    'uid': id_check['uid'],
+                    'entry-type': '1-1',
+                    'issue-date': '2021-08-23 23:45:01',
+                    'honor-id': '',
+                    'vehicles': '',
+                    'additional-areas': '',
+                    'start-date': '',
+                    'end-date': '',
+                    'escort-department': '',
+                    'escort-grade': '',
+                    'escort-name': '',
+                    'escort-phone-additional': '',
+                    'escort-phone-mobile': '',
+                    'objective': ''
+                    }
                     await agent.user_issue_pass('any00', 'pass1234', SAMPLE_PASS_DATA)
             elif option in "cC":    # check identification
                 id_check = await agent.user_check_identification('any00', 'pass1234')
-                if id_check:
+                if id_check['result']:
                     log_msg("ID CHECK SUCCESS")
                 else:
                     log_msg("ID CHECK FAIL")
             elif option in "eE":    # check pass
-                pass_check = await agent.user_check_pass('any00', 'pass1234')
-                if pass_check:
+                pass_check = await agent.user_check_pass('any00', 'pass1234', "1-1")
+                if pass_check['result']:
                     log_msg("PASS CHECK SUCCESS")
                 else:
                     log_msg("PASS CHECK FAIL")
-                # await agent.user_check_pass('any00', 'pass1234', "1-1")
+                log_msg("Test with wrong entry-type:")
+                pass_check = await agent.user_check_pass('any00', 'pass1234', "1-2")
+                if pass_check['result']:
+                    log_msg("PASS CHECK SUCCESS (wrong for different entry type)")
+                else:
+                    log_msg("PASS CHECK FAIL (correct for different entry type)")
 
 
         if redwit_agent.show_timing:
