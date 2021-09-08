@@ -742,7 +742,12 @@ class RedwitAgent(AriesAgent):
         return proof_check_result
 
     # TODO: uid check implementation
-    async def user_check_pass(self, name, key, entry_type=None):
+    async def user_check_pass(self, name, key, uid, entry_type=None):
+        # TODO: choose design: add id check in here, or always call both id_check and pass_check
+        id_check = await self.user_check_identification(name, key, uid)
+        if not id_check['result']:
+            return {"result":False}
+
         # get user wallet
         user_wallet_id = await self._get_wallet_id(name)
         if user_wallet_id == None:
@@ -760,18 +765,18 @@ class RedwitAgent(AriesAgent):
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
 
 
-        restriction = {}
-        restriction["schema_name"] = "pass_schema"
+        entr_restr = {}
+        entr_restr["schema_name"] = "pass_schema"
         if entry_type != None:
-            restriction["attr::entry-type::value"] = entry_type
+            entr_restr["attr::entry-type::value"] = entry_type
         req_attrs = [
             {
                 "name": "uid",
-                "restrictions": [{"schema_name": "pass_schema"}],
+                "restrictions": [{"schema_name": "pass_schema", "attr::uid::value": uid}],
             },
             {
                 "name": "entry-type",
-                "restrictions": [restriction],
+                "restrictions": [entr_restr],
             },
             {
                 "name": "issue-date",
@@ -790,11 +795,7 @@ class RedwitAgent(AriesAgent):
                 "restrictions": [{"schema_name": "pass_schema"}],
             },
             {
-                "name": "start-date",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "end-date",
+                "name": "start-date",#TODO: move this to pred?
                 "restrictions": [{"schema_name": "pass_schema"}],
             },
             {
@@ -824,6 +825,12 @@ class RedwitAgent(AriesAgent):
         ]
         req_preds = [
             # TODO: fill this
+            {
+                "name": "end-date",
+                "p_type": ">=",
+                "p_value": int(time.time()),
+                "restrictions": [{"schema_name": "pass_schema"}],
+            }
         ]
         indy_proof_request = {
             "name": "Proof of Pass",
@@ -1077,8 +1084,8 @@ async def main(args):
                     'honor-id': '',
                     'vehicles': '',
                     'additional-areas': '',
-                    'start-date': '',
-                    'end-date': '',
+                    'start-date': str(int(time.time())),
+                    'end-date': str(int(time.time()) + EXPIRATION_PERIOD_SEC),
                     'escort-department': '',
                     'escort-grade': '',
                     'escort-name': '',
@@ -1088,24 +1095,17 @@ async def main(args):
                     }
                     await agent.user_issue_pass('any00', 'pass1234', SAMPLE_PASS_DATA)
             elif option in "cC":    # check identification
-                id_check = await agent.user_check_identification('any00', 'pass1234')
+                id_check = await agent.user_check_identification('any00', 'pass1234', 'zyxwvu...')
                 if id_check['result']:
                     log_msg("ID CHECK SUCCESS")
                 else:
                     log_msg("ID CHECK FAIL")
             elif option in "eE":    # check pass
-                pass_check = await agent.user_check_pass('any00', 'pass1234', "1-1")
+                pass_check = await agent.user_check_pass('any00', 'pass1234', 'zyxwvu...')
                 if pass_check['result']:
                     log_msg("PASS CHECK SUCCESS")
                 else:
                     log_msg("PASS CHECK FAIL")
-                log_msg("Test with wrong entry-type:")
-                pass_check = await agent.user_check_pass('any00', 'pass1234', "1-2")
-                if pass_check['result']:
-                    log_msg("PASS CHECK SUCCESS (wrong for different entry type)")
-                else:
-                    log_msg("PASS CHECK FAIL (correct for different entry type)")
-
 
         if redwit_agent.show_timing:
             timing = await redwit_agent.agent.fetch_timing()
