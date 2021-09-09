@@ -875,9 +875,10 @@ class RedwitAgent(AriesAgent):
 
     async def _handle_register_user(self, request: web.BaseRequest):
         body = await request.json()
-        json_body = json.loads( body )
-        name = json_body.get("name")
-        key = json_body.get("key")
+        log_msg( 'json')
+        log_json( body )
+        name = body.get("name")
+        key = body.get("key")
         try:
             did = await self.user_registration( name, key )
             resp_obj = { 'did' : did, 'status': 'success' }
@@ -889,14 +890,13 @@ class RedwitAgent(AriesAgent):
 
     async def _handle_issue_identification(self, request: web.BaseRequest):
         body = await request.json()
-        json_body = json.loads( body )
-        name = json_body.get("name")
-        key = json_body.get("key")
+        name = body.get("name")
+        key = body.get("key")
         log_msg( 'UserInfo: ' + name + key )
-        del json_body["name"]
-        del json_body["key"]
+        del body["name"]
+        del body["key"]
         try:
-            res = await self.user_issue_identification( name, key , json_body)
+            res = await self.user_issue_identification( name, key , body)
             log_msg( res )
             resp_obj = { 'vc' : res, 'status': 'success' }
             return web.json_response(resp_obj)
@@ -907,13 +907,12 @@ class RedwitAgent(AriesAgent):
 
     async def _handle_check_identification(self, request: web.BaseRequest):
         body = await request.json()
-        json_body = json.loads( body )
-        name = json_body.get("name")
-        key = json_body.get("key")
-        cred_id = json_body.get("cred_id")
+        name = body.get("name")
+        key = body.get("key")
+        cred_id = body.get("cred_id")
         log_msg( 'UserInfo: ' + name + key + cred_id)
-        del json_body["name"]
-        del json_body["key"]
+        del body["name"]
+        del body["key"]
         try:
             res = await self.user_check_identification( name, key )
             log_msg( res )
@@ -986,7 +985,7 @@ async def main(args):
             url='http://localhost:8080/register'
             payload = { 'name' : 'any00', 'key': 'pass1234'}
             headers = {'content-type': 'application/json'}
-            async with session.post( url, json=json.dumps(payload), headers=headers ) as resp:
+            async with session.post( url, json=payload, headers=headers ) as resp:
                 log_msg(resp.status)
                 log_msg(await resp.text())
         await asyncio.sleep(1)
@@ -1015,7 +1014,7 @@ async def main(args):
                 'expirationDate': str(int(time.time()) + EXPIRATION_PERIOD_SEC)
                 }
             headers = {'content-type': 'application/json'}
-            async with session.post( url, json=json.dumps(SAMPLE_ID_DATA), headers=headers ) as resp:
+            async with session.post( url, json=SAMPLE_ID_DATA, headers=headers ) as resp:
                 log_msg(resp.status)
                 resp_str = await resp.text()
                 resp_obj = json.loads(resp_str)['vc']
@@ -1029,7 +1028,7 @@ async def main(args):
                 'name' : 'any00', 'key': 'pass1234', 'cred_id': cred_id, # for authentication
                 }
             headers = {'content-type': 'application/json'}
-            async with session.post( url, json=json.dumps(json_data), headers=headers ) as resp:
+            async with session.post( url, json=json_data, headers=headers ) as resp:
                 log_msg(resp.status)
                 log_msg(await resp.text())
 
