@@ -552,6 +552,7 @@ class AgentContainer:
         mediation: bool = False,
         use_did_exchange: bool = False,
         wallet_type: str = None,
+        subagent_wallet_key: str = None,
         public_did: bool = True,
         seed: str = "random",
         aip: int = 20,
@@ -570,6 +571,7 @@ class AgentContainer:
         self.mediation = mediation
         self.use_did_exchange = use_did_exchange
         self.wallet_type = wallet_type
+        self.subagent_wallet_key = subagent_wallet_key
         self.public_did = public_did
         self.seed = seed
         self.aip = aip
@@ -644,8 +646,9 @@ class AgentContainer:
         if self.multitenant:
             # create an initial managed sub-wallet (also mediated)
             rand_name = str(random.randint(100_000, 999_999))
-            await self.agent.register_or_switch_wallet(
+            await self.agent.register_or_switch_base_wallet(
                 self.ident + ".initial." + rand_name,
+                self.agent.subagent_wallet_key,
                 public_did=self.public_did,
                 webhook_port=None,
                 mediator_agent=self.mediator_agent,
@@ -996,6 +999,12 @@ def arg_parser(ident: str = None, port: int = 8020):
         help="Set the agent wallet type",
     )
     parser.add_argument(
+        "--subagent-wallet-key",
+        type=str,
+        metavar="<subagent-wallet-key>",
+        help="Set the subagent wallet key",
+    )
+    parser.add_argument(
         "--arg-file",
         type=str,
         metavar="<arg-file>",
@@ -1066,6 +1075,8 @@ async def create_agent_with_args(args, ident: str = None):
         aip = 20
     elif "cred_type" in args and args.cred_type == CRED_FORMAT_INDY:
         public_did = True
+    elif "redwit" == agent_ident:
+        public_did = True
     else:
         public_did = args.public_did if "public_did" in args else None
 
@@ -1087,6 +1098,7 @@ async def create_agent_with_args(args, ident: str = None):
         cred_type=cred_type,
         use_did_exchange=args.did_exchange if "did_exchange" in args else False,
         wallet_type=arg_file_dict.get("wallet-type") or args.wallet_type,
+        subagent_wallet_key=args.subagent_wallet_key,
         public_did=public_did,
         seed="random" if public_did else None,
         arg_file=arg_file,

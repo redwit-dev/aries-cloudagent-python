@@ -94,8 +94,15 @@ do
       echo While viewing logs, hit CTRL-C to return to the command line.
       echo To stop the agent, use: \"docker stop ${AGENT}\". The docker environment will
       echo -e "be removed on stop.\n\n"
-    else
-      echo The "bg" option \(for running docker in detached mode\) is only for agents Alice, Faber and Acme.
+    elif [ "${AGENT}" = "redwit" ]; then
+      echo -e "WELCOME TO REDWIT ARIES NETWORK! :)"
+      echo -e "\nRunning in ${AGENT} in the background. Note that you cannot use the command line console in this mode."
+      echo To see the logs use: \"docker logs ${AGENT}\".
+      echo While viewing logs, hit CTRL-C to return to the command line.
+      echo To stop the agent, use: \"docker stop ${AGENT}\". The docker environment will
+      echo -e "be removed on stop.\n\n"
+    else 
+      echo The "bg" option \(for running docker in detached mode\) is only for agents Alice, Faber, Acme and Redwit.
       echo Ignoring...
     fi
     continue
@@ -106,7 +113,7 @@ do
 Usage:
    ./demo_run <agent> [OPTIONS]
 
-   - <agent> is one of alice, faber, acme, performance.
+   - <agent> is one of alice, faber, acme, performance, redwit.
    - Options:
       --events - display on the terminal the webhook events from the ACA-Py agent.
       --timing - at the end of the run, display timing; relevant to the "performance" agent.
@@ -137,17 +144,21 @@ elif [ "$AGENT" = "acme" ]; then
   AGENT_MODULE="acme"
   AGENT_PORT=8040
   AGENT_PORT_RANGE=8040-8047
+elif [ "$AGENT" = "redwit" ]; then
+  AGENT_MODULE="redwit"
+  AGENT_PORT=8050
+  AGENT_PORT_RANGE=8000-8097
 elif [ "$AGENT" = "performance" ]; then
   AGENT_MODULE="performance"
   AGENT_PORT=8050
   AGENT_PORT_RANGE=8050-8068
 else
-  echo "Please specify which agent you want to run. Choose from 'faber', 'alice', 'acme', or 'performance'."
+  echo "Please specify which agent you want to run. Choose from 'faber', 'alice', 'acme', 'redwit', or 'performance'."
   exit 1
 fi
 
 echo "Preparing agent image..."
-docker build -q -t faber-alice-demo -f ../docker/Dockerfile.demo .. || exit 1
+docker build -q -t redwit-demo -f ../docker/Dockerfile.demo .. || exit 1
 
 if [ ! -z "$DOCKERHOST" ]; then
   # provided via APPLICATION_URL environment variable
@@ -250,4 +261,4 @@ $DOCKER run --name $AGENT --rm -it ${DOCKER_OPTS} \
   -p 0.0.0.0:$AGENT_PORT_RANGE:$AGENT_PORT_RANGE \
   ${DOCKER_VOL} \
   $DOCKER_ENV \
-  faber-alice-demo $AGENT_MODULE --port $AGENT_PORT $ARGS
+  redwit-demo $AGENT_MODULE --port $AGENT_PORT $ARGS

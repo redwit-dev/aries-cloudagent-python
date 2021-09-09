@@ -188,6 +188,7 @@ class DemoAgent:
         self.wallet_name = (
             params.get("wallet_name") or self.ident.lower().replace(" ", "") + rand_name
         )
+        self.subagent_wallet_key = params.get("subagent_wallet_key") or self.ident + rand_name
         self.wallet_key = params.get("wallet_key") or self.ident + rand_name
         self.did = None
         self.wallet_stats = []
@@ -399,6 +400,99 @@ class DemoAgent:
             pass
         else:
             raise Exception("Invalid credential type:" + cred_type)
+
+    async def register_or_switch_base_wallet(
+        self,
+        target_wallet_name,
+        target_wallet_key,
+        public_did=False,
+        webhook_port: int = None,
+        mediator_agent=None,
+        cred_type: str = CRED_FORMAT_INDY,
+    ):
+        if webhook_port is not None:
+            await self.listen_webhooks(webhook_port)
+        self.log(f"Register or switch to wallet {target_wallet_name}")
+        if target_wallet_name == self.agency_wallet_name:
+            self.ident = self.agency_ident
+            self.wallet_name = self.agency_wallet_name
+            self.seed = self.agency_wallet_seed
+            self.did = self.agency_wallet_did
+            self.wallet_key = self.agency_wallet_key
+
+            wallet_params = await self.get_id_and_token(self.wallet_name)
+            self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+            self.managed_wallet_params["token"] = wallet_params["token"]
+
+            self.log(f"Switching to AGENCY wallet {target_wallet_name}")
+            return False
+
+        # check if wallet exists already
+        wallets = await self.agency_admin_GET("/multitenancy/wallets")
+        for wallet in wallets["results"]:
+            if wallet["settings"]["wallet.name"] == target_wallet_name:
+                # if so set local agent attributes
+                self.wallet_name = target_wallet_name
+                # assume wallet key is wallet name
+                self.wallet_key = target_wallet_key
+                self.ident = target_wallet_name
+                # we can't recover the seed so let's set it to None and see what happens
+                self.seed = None
+
+                wallet_params = await self.get_id_and_token(self.wallet_name)
+                self.managed_wallet_params["wallet_id"] = wallet_params["id"]
+                self.managed_wallet_params["token"] = wallet_params["token"]
+
+                self.log(f"Switching to EXISTING wallet {target_wallet_name}")
+                return False
+
+        # if not then create it
+        wallet_params = {
+            "wallet_key": target_wallet_key,
+            "wallet_name": target_wallet_name,
+            "wallet_type": self.wallet_type,
+            "label": target_wallet_name,
+            "wallet_webhook_urls": self.webhook_url,
+            "wallet_dispatch_type": "both",
+        }
+        self.wallet_name = target_wallet_name
+        self.wallet_key = target_wallet_key
+        self.ident = target_wallet_name
+        new_wallet = await self.agency_admin_POST("/multitenancy/wallet", wallet_params)
+        self.log("New wallet params:", new_wallet)
+        self.managed_wallet_params = new_wallet
+
+        self.subagent = {}
+        self.subagent['wallet'] = new_wallet
+        if public_did:
+            if cred_type == CRED_FORMAT_INDY:
+                # assign public did
+                new_did = await self.admin_POST("/wallet/did/create")
+                self.did = new_did["result"]["did"]
+                await self.register_did(
+                    did=new_did["result"]["did"], verkey=new_did["result"]["verkey"]
+                )
+                await self.admin_POST("/wallet/did/public?did=" + self.did)
+                self.subagent[DID_METHOD_SOV] = new_did
+            elif cred_type == CRED_FORMAT_JSON_LD:
+                # create did of appropriate type
+                data = {"method": DID_METHOD_KEY, "options": {"key_type": KEY_TYPE_BLS}}
+                new_did = await self.admin_POST("/wallet/did/create", data=data)
+                self.did = new_did["result"]["did"]
+
+                # did:key is not registered as a public did
+            else:
+                # todo ignore for now
+                pass
+
+        # if mediation, mediate the wallet connections
+        if mediator_agent:
+            if not await connect_wallet_to_mediator(self, mediator_agent):
+                log_msg("Mediation setup FAILED :-(")
+                raise Exception("Mediation setup FAILED :-(")
+
+        self.log(f"Created NEW wallet {target_wallet_name}")
+        return True
 
     async def register_or_switch_wallet(
         self,
