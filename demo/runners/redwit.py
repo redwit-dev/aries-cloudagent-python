@@ -303,16 +303,18 @@ class RedwitAgent(AriesAgent):
                 headers=headers
             )
             self.log("Proof =", proof["verified"])
-            self.log(message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attrs"]["0_uid_uuid"]['raw'])
             self.last_proof_received = proof
 
+            pres_waiting_result = {}
             if proof["verified"] == "true":
-                uid = message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attrs"]["0_uid_uuid"]['raw']
-                pres_waiting_result = {"result": True, "uid": uid}
-                self.pres_waitings[pres_ex_id] = pres_waiting_result
+                pres_waiting_result["result"] = True
+                attr_groups = message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attr_groups"]
+                if "0_identification_uuid" in attr_groups:
+                    uid = attr_groups["0_identification_uuid"]["values"]["uid"]["raw"]
+                    pres_waiting_result["uid"] = uid
             else:
-                pres_waiting_result = {"result": False}
-                self.pres_waitings[pres_ex_id] = pres_waiting_result
+                pres_waiting_result["result"] = False
+            self.pres_waitings[pres_ex_id] = pres_waiting_result
 
     def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
@@ -646,72 +648,6 @@ class RedwitAgent(AriesAgent):
         restriction["schema_name"] = "id_schema"
         if uid != None:
             restriction["attr::uid::value"] = uid
-        req_attrs = [
-            {
-                "name": "uid",
-                "restrictions": [restriction],
-            },
-            {
-                "name": "app-id",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "internal",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "group",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "military-id",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "name-ko",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "name-en",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "resident-number-head",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "resident-number-tail",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "branch",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "blood-type",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "grade",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "issuer",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "department",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "phone-additional",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-            {
-                "name": "phone-mobile",
-                "restrictions": [{"schema_name": "id_schema"}],
-            },
-        ]
         req_preds = [
             # test zero-knowledge proofs
             # TODO: suggested on 210905
@@ -726,8 +662,27 @@ class RedwitAgent(AriesAgent):
             "name": "Proof of Identification",
             "version": "1.0",
             "requested_attributes": {
-                f"0_{req_attr['name']}_uuid": req_attr
-                for req_attr in req_attrs
+                f"0_identification_uuid": {
+                    "names": [
+                        'uid',
+                        'app-id',
+                        'internal',
+                        'group',
+                        'military-id',
+                        'name-ko',
+                        'name-en',
+                        'resident-number-head',
+                        'resident-number-tail',
+                        'branch',
+                        'blood-type',
+                        'grade',
+                        'issuer',
+                        'department',
+                        'phone-additional',
+                        'phone-mobile'
+                    ],
+                    "restrictions": [restriction]
+                }
             },
             "requested_predicates": {
                 f"0_{req_pred['name']}_GE_uuid": req_pred
@@ -780,64 +735,11 @@ class RedwitAgent(AriesAgent):
         connection_id = await self._get_connection(self.subagent['wallet']['token'], user_wallet_token)
 
 
-        entr_restr = {}
-        entr_restr["schema_name"] = "pass_schema"
+        restriction = {}
+        restriction["schema_name"] = "pass_schema"
+        restriction["attr::uid::value"] = uid
         if entry_type != None:
-            entr_restr["attr::entry-type::value"] = entry_type
-        req_attrs = [
-            {
-                "name": "uid",
-                "restrictions": [{"schema_name": "pass_schema", "attr::uid::value": uid}],
-            },
-            {
-                "name": "entry-type",
-                "restrictions": [entr_restr],
-            },
-            {
-                "name": "issue-date",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "honor-id",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "vehicles",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "additional-areas",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "start-date",#TODO: move this to pred?
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "escort-department",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "escort-grade",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "escort-name",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "escort-phone-additional",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "escort-phone-mobile",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-            {
-                "name": "objective",
-                "restrictions": [{"schema_name": "pass_schema"}],
-            },
-        ]
+            restriction["attr::entry-type::value"] = entry_type
         req_preds = [
             # TODO: fill this
             {
@@ -851,8 +753,24 @@ class RedwitAgent(AriesAgent):
             "name": "Proof of Pass",
             "version": "1.0",
             "requested_attributes": {
-                f"0_{req_attr['name']}_uuid": req_attr
-                for req_attr in req_attrs
+                f"0_pass_uuid": {
+                    "names": [
+                        'uid',
+                        'entry-type',
+                        'issue-date',
+                        'honor-id',
+                        'vehicles',
+                        'additional-areas',
+                        'start-date',
+                        'escort-department',
+                        'escort-grade',
+                        'escort-name',
+                        'escort-phone-additional',
+                        'escort-phone-mobile',
+                        'objective'
+                    ],
+                    "restrictions": [restriction]
+                }
             },
             "requested_predicates": {
                 f"0_{req_pred['name']}_GE_uuid": req_pred
