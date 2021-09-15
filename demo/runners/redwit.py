@@ -4,6 +4,8 @@ import logging
 import os
 import sys
 import time
+# for uid generation
+import uuid
 
 from aiohttp import (
     web,
@@ -31,7 +33,7 @@ CRED_PREVIEW_TYPE = "https://didcomm.org/issue-credential/2.0/credential-preview
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 
 # TODO: suggested on 210905
-EXPIRATION_PERIOD_SEC = 30    # 30 seconds expiration for test
+EXPIRATION_PERIOD_SEC = 100    # 100 seconds expiration for test
 
 logging.basicConfig(level=logging.WARNING)
 LOGGER = logging.getLogger(__name__)
@@ -403,6 +405,7 @@ class RedwitAgent(AriesAgent):
         # identification schema
         attrs = [
         'uid',
+        'app-id',
         'internal',
         'group',
         'military-id',
@@ -527,6 +530,14 @@ class RedwitAgent(AriesAgent):
         log_msg("Debug[wallet_token]: "+user_wallet_token)
         log_msg("Debug[connection_id]: "+connection_id)
 
+        # uid generation
+        if "uid" in data:
+            # error
+            log_msg("Debug: data should not contain uid")
+            return None
+        uid = 'TODO: random uuid format required'
+        data['uid'] = str(uuid.uuid1()) # TODO: is the uuid1 makes collision?
+
         cred_preview = {
             "@type": CRED_PREVIEW_TYPE,
             "attributes": [
@@ -639,6 +650,10 @@ class RedwitAgent(AriesAgent):
             {
                 "name": "uid",
                 "restrictions": [restriction],
+            },
+            {
+                "name": "app-id",
+                "restrictions": [{"schema_name": "id_schema"}],
             },
             {
                 "name": "internal",
@@ -909,12 +924,12 @@ class RedwitAgent(AriesAgent):
         body = await request.json()
         name = body.get("name")
         key = body.get("key")
-        cred_id = body.get("cred_id")
-        log_msg( 'UserInfo: ' + name + key + cred_id)
+        uid = body.get("uid")
+        log_msg( 'UserInfo: ' + name + key + uid)
         del body["name"]
         del body["key"]
         try:
-            res = await self.user_check_identification( name, key )
+            res = await self.user_check_identification( name, key, uid)
             log_msg( res )
             resp_obj = { 'vp' : res, 'status': 'success' }
             return web.json_response(resp_obj)
@@ -995,7 +1010,7 @@ async def main(args):
             # TODO : token based authentication
             SAMPLE_ID_DATA = {
                 'name' : 'any00', 'key': 'pass1234', # for authentication
-                'uid': 'zyxwvu...',
+                'app-id': 'zyxwvu...',
                 'internal': 'true',
                 'group': '1-1',
                 'military-id': '00-0000',
@@ -1018,19 +1033,113 @@ async def main(args):
                 log_msg(resp.status)
                 resp_str = await resp.text()
                 resp_obj = json.loads(resp_str)['vc']
-                cred_id = json.loads(resp_obj)['referent']
+                uid = json.loads(resp_obj)['attrs']['uid']
                 log_msg( '*************Verifiable Credential***********' )
                 log_msg( resp_str )
         async with ClientSession() as session:
             url='http://localhost:8080/check/identification'
             # TODO : token based authentication
             json_data = {
-                'name' : 'any00', 'key': 'pass1234', 'cred_id': cred_id, # for authentication
+                'name' : 'any00', 'key': 'pass1234', 'uid': uid, # for authentication
                 }
             headers = {'content-type': 'application/json'}
             async with session.post( url, json=json_data, headers=headers ) as resp:
                 log_msg(resp.status)
                 log_msg(await resp.text())
+
+        await agent.user_registration('any01', '1234')
+        await asyncio.sleep(1)
+        SAMPLE_ID_DATA = {
+            'app-id': 'zyxwvu...',
+            'internal': 'true',
+            'group': '1-1',
+            'military-id': '00-0000',
+            'name-ko': '성춘향',
+            'name-en': 'Seong Chun Hyang',
+            'resident-number-head': '981212',
+            'resident-number-tail': '1234567',
+            'branch': 'ARTILLERY',
+            'blood-type': 'O',
+            'grade': 'ARMY-O-3',
+            'issuer': '육군사관학교',
+            'department': 'A',
+            'phone-additional': '02-123-4567',
+            'phone-mobile': '010-2222-2222',
+            # TODO: suggested on 210905
+            'expirationDate': str(int(time.time()) + EXPIRATION_PERIOD_SEC)
+        }
+        res = await agent.user_issue_identification('any01', '1234', SAMPLE_ID_DATA)
+        uid1 = json.loads(res)['attrs']['uid']
+        SAMPLE_ID_DATA = {
+            'app-id': 'zyxwvu...',
+            'internal': 'true',
+            'group': '1-1',
+            'military-id': '00-0000',
+            'name-ko': '성춘향',
+            'name-en': 'Seong Chun Hyang',
+            'resident-number-head': '981212',
+            'resident-number-tail': '1234567',
+            'branch': 'ARTILLERY',
+            'blood-type': 'O',
+            'grade': 'ARMY-O-3',
+            'issuer': '육군사관학교',
+            'department': 'A',
+            'phone-additional': '02-123-4567',
+            'phone-mobile': '010-2222-2222',
+            # TODO: suggested on 210905
+            'expirationDate': str(int(time.time()) + EXPIRATION_PERIOD_SEC)
+        }
+        res = await agent.user_issue_identification('any01', '1234', SAMPLE_ID_DATA)
+        uid2 = json.loads(res)['attrs']['uid']
+        SAMPLE_PASS_DATA = {
+            'uid': uid1,
+            'entry-type': '1-1',
+            'issue-date': '2021-08-23 23:45:01',
+            'honor-id': '',
+            'vehicles': '',
+            'additional-areas': '',
+            'start-date': str(int(time.time())),
+            'end-date': str(int(time.time()) + EXPIRATION_PERIOD_SEC),
+            'escort-department': '',
+            'escort-grade': '',
+            'escort-name': '',
+            'escort-phone-additional': '',
+            'escort-phone-mobile': '',
+            'objective': ''
+            }
+        await agent.user_issue_pass('any01', '1234', SAMPLE_PASS_DATA)
+        SAMPLE_PASS_DATA = {
+            'uid': uid2,
+            'entry-type': '1-2',
+            'issue-date': '2021-08-23 23:45:01',
+            'honor-id': '',
+            'vehicles': '',
+            'additional-areas': '',
+            'start-date': str(int(time.time())),
+            'end-date': str(int(time.time()) + EXPIRATION_PERIOD_SEC),
+            'escort-department': '',
+            'escort-grade': '',
+            'escort-name': '',
+            'escort-phone-additional': '',
+            'escort-phone-mobile': '',
+            'objective': ''
+            }
+        await agent.user_issue_pass('any01', '1234', SAMPLE_PASS_DATA)
+        pass_check = await agent.user_check_pass('any01', '1234', uid1, entry_type='1-2')
+        if pass_check['result']:
+            log_msg("PASS CHECK SUCCESS, which means bad")
+        else:
+            log_msg("PASS CHECK FAIL, which means good")
+        pass_check = await agent.user_check_pass('any01', '1234', uid1, entry_type='1-1')
+        if pass_check['result']:
+            log_msg("PASS CHECK SUCCESS, which means good")
+        else:
+            log_msg("PASS CHECK FAIL, which means bad")
+        pass_check = await agent.user_check_pass('any01', '1234', uid2, entry_type='1-2')
+        if pass_check['result']:
+            log_msg("PASS CHECK SUCCESS, which means good")
+        else:
+            log_msg("PASS CHECK FAIL, which means bad")
 
         options = ""
         options += "    (W) DEBUG user_registration\n"
@@ -1051,7 +1160,7 @@ async def main(args):
 
                 # SAMPLE ID DATA
                 SAMPLE_ID_DATA = {
-                'uid': 'zyxwvu...',
+                'app-id': 'zyxwvu...',
                 'internal': 'true',
                 'group': '1-1',
                 'military-id': '00-0000',
@@ -1094,13 +1203,13 @@ async def main(args):
                     }
                     await agent.user_issue_pass('any00', 'pass1234', SAMPLE_PASS_DATA)
             elif option in "cC":    # check identification
-                id_check = await agent.user_check_identification('any00', 'pass1234', 'zyxwvu...')
+                id_check = await agent.user_check_identification('any00', 'pass1234', 'TODO: random uuid format required')
                 if id_check['result']:
                     log_msg("ID CHECK SUCCESS")
                 else:
                     log_msg("ID CHECK FAIL")
             elif option in "eE":    # check pass
-                pass_check = await agent.user_check_pass('any00', 'pass1234', 'zyxwvu...')
+                pass_check = await agent.user_check_pass('any00', 'pass1234', 'TODO: random uuid format required')
                 if pass_check['result']:
                     log_msg("PASS CHECK SUCCESS")
                 else:
