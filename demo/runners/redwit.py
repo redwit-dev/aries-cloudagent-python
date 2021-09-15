@@ -33,7 +33,7 @@ CRED_PREVIEW_TYPE = "https://didcomm.org/issue-credential/2.0/credential-preview
 TAILS_FILE_COUNT = int(os.getenv("TAILS_FILE_COUNT", 100))
 
 # TODO: suggested on 210905
-EXPIRATION_PERIOD_SEC = 100    # 100 seconds expiration for test
+EXPIRATION_PERIOD_SEC = 40    # 100 seconds expiration for test
 
 logging.basicConfig(level=logging.WARNING)
 LOGGER = logging.getLogger(__name__)
@@ -302,19 +302,40 @@ class RedwitAgent(AriesAgent):
                 f"/present-proof-2.0/records/{pres_ex_id}/verify-presentation",
                 headers=headers
             )
-            self.log("Proof =", proof["verified"])
             self.last_proof_received = proof
 
             pres_waiting_result = {}
-            if proof["verified"] == "true":
-                pres_waiting_result["result"] = True
-                attr_groups = message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attr_groups"]
-                if "0_identification_uuid" in attr_groups:
-                    uid = attr_groups["0_identification_uuid"]["values"]["uid"]["raw"]
-                    pres_waiting_result["uid"] = uid
+            if proof["verified"] != "true":
+                pres_waiting_result["result"] = False
+                self.pres_waitings[pres_ex_id] = pres_waiting_result
+                self.log("Proof =", False)
+                return
+
+            attr_groups = message["by_format"]["pres"]["indy"]["requested_proof"]["revealed_attr_groups"]
+            if "0_identification_uuid" in attr_groups:
+                timelimit = attr_groups["0_identification_uuid"]["values"]["expirationDate"]["raw"]
+                if int(timelimit) < int(time.time()):
+                    pres_waiting_result["result"] = False
+                    self.pres_waitings[pres_ex_id] = pres_waiting_result
+                    self.log("Proof =", False)
+                    return
+                uid = attr_groups["0_identification_uuid"]["values"]["uid"]["raw"]
+                pres_waiting_result["uid"] = uid
+            elif "0_pass_uuid" in attr_groups:
+                timelimit = attr_groups["0_pass_uuid"]["values"]["end-date"]["raw"]
+                if int(timelimit) < int(time.time()):
+                    pres_waiting_result["result"] = False
+                    self.pres_waitings[pres_ex_id] = pres_waiting_result
+                    self.log("Proof =", False)
+                    return
             else:
                 pres_waiting_result["result"] = False
+                self.pres_waitings[pres_ex_id] = pres_waiting_result
+                self.log("Proof =", False)
+                return
+            pres_waiting_result["result"] = True
             self.pres_waitings[pres_ex_id] = pres_waiting_result
+            self.log("Proof =", True)
 
     def _attach_token_headers(self, headers, token):
         headers["Authorization"] = (
@@ -648,16 +669,6 @@ class RedwitAgent(AriesAgent):
         restriction["schema_name"] = "id_schema"
         if uid != None:
             restriction["attr::uid::value"] = uid
-        req_preds = [
-            # test zero-knowledge proofs
-            # TODO: suggested on 210905
-            {
-                "name": "expirationDate",
-                "p_type": ">=",
-                "p_value": int(time.time()),
-                "restrictions": [{"schema_name": "id_schema"}],
-            }
-        ]
         indy_proof_request = {
             "name": "Proof of Identification",
             "version": "1.0",
@@ -679,15 +690,13 @@ class RedwitAgent(AriesAgent):
                         'issuer',
                         'department',
                         'phone-additional',
-                        'phone-mobile'
+                        'phone-mobile',
+                        'expirationDate'
                     ],
                     "restrictions": [restriction]
                 }
             },
-            "requested_predicates": {
-                f"0_{req_pred['name']}_GE_uuid": req_pred
-                for req_pred in req_preds
-            },
+            "requested_predicates": {},
         }
         proof_request_web_request = {
             "connection_id": connection_id,
@@ -740,15 +749,6 @@ class RedwitAgent(AriesAgent):
         restriction["attr::uid::value"] = uid
         if entry_type != None:
             restriction["attr::entry-type::value"] = entry_type
-        req_preds = [
-            # TODO: fill this
-            {
-                "name": "end-date",
-                "p_type": ">=",
-                "p_value": int(time.time()),
-                "restrictions": [{"schema_name": "pass_schema"}],
-            }
-        ]
         indy_proof_request = {
             "name": "Proof of Pass",
             "version": "1.0",
@@ -762,6 +762,7 @@ class RedwitAgent(AriesAgent):
                         'vehicles',
                         'additional-areas',
                         'start-date',
+                        'end-date',
                         'escort-department',
                         'escort-grade',
                         'escort-name',
@@ -772,10 +773,7 @@ class RedwitAgent(AriesAgent):
                     "restrictions": [restriction]
                 }
             },
-            "requested_predicates": {
-                f"0_{req_pred['name']}_GE_uuid": req_pred
-                for req_pred in req_preds
-            },
+            "requested_predicates": {},
         }
         proof_request_web_request = {
             "connection_id": connection_id,
@@ -1121,7 +1119,7 @@ async def main(args):
                     }
                     await agent.user_issue_pass('any00', 'pass1234', SAMPLE_PASS_DATA)
             elif option in "cC":    # check identification
-                id_check = await agent.user_check_identification('any00', 'pass1234', 'TODO: random uuid format required')
+                id_check = await agent.user_check_identification('any00', 'pass1234')
                 if id_check['result']:
                     log_msg("ID CHECK SUCCESS")
                 else:
