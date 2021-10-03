@@ -34,6 +34,26 @@ class IndyPresExchHandler:
         super().__init__()
         self._profile = profile
 
+    # added for REDWIT usage
+    async def return_presentation_identification_vp(
+        self,
+        proof_request,
+        requested_credentials,
+        schemas,
+        cred_defs,
+        revocation_states,
+    ) -> dict:
+        holder = self._profile.inject(IndyHolder)
+        indy_proof_json = await holder.create_presentation(
+            proof_request,
+            requested_credentials,
+            schemas,
+            cred_defs,
+            revocation_states,
+        )
+        indy_proof = json.loads(indy_proof_json)
+        return indy_proof
+
     async def return_presentation(
         self,
         pres_ex_record: Union[V10PresentationExchange, V20PresExRecord],

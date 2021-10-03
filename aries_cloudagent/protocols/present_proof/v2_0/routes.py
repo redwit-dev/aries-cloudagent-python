@@ -951,6 +951,27 @@ async def present_proof_send_bound_request(request: web.BaseRequest):
 
     return web.json_response(result)
 
+async def present_identification_vp(request: web.BaseRequest):
+    context: AdminRequestContext = request["context"]
+    body = await request.json()
+
+    # TODO: check request is bad or not
+
+    proof_request = body.get("proof_request")
+    requested_credentials = body.get("requested_credentials")
+    schemas = body.get("schemas")
+    cred_defs = body.get("cred_defs")
+    revocation_states = body.get("revocation_states")
+    pres_manager = V20PresManager(context.profile)
+    pres_message = await pres_manager.create_pres_identification_vp(
+        proof_request,
+        requested_credentials,
+        schemas,
+        cred_defs,
+        revocation_states
+    )
+    return web.json_response(pres_message.serialize())
+
 
 @docs(tags=["present-proof v2.0"], summary="Sends a proof presentation")
 @match_info_schema(V20PresExIdMatchInfoSchema())
@@ -1055,6 +1076,35 @@ async def present_proof_send_presentation(request: web.BaseRequest):
 
     return web.json_response(result)
 
+async def verify_identification_vp(request: web.BaseRequest):
+
+    context: AdminRequestContext = request["context"]
+    body = await request.json()
+
+    # TODO: check request is bad or not
+
+    indy_proof_request = body.get("indy_proof_request")
+    pres_serialized = body.get("pres_serialized")
+    schemas = body.get("schemas")
+    cred_defs = body.get("cred_defs")
+    rev_reg_defs = body.get("rev_reg_defs")
+    rev_reg_entries = body.get("rev_reg_entries")
+    
+    pres_manager = V20PresManager(context.profile)
+    try:
+        res = await pres_manager.verify_pres_identification_vp(
+            indy_proof_request,
+            pres_serialized,
+            schemas,
+            cred_defs,
+            rev_reg_defs,
+            rev_reg_entries
+        )
+    except (BaseModelError, LedgerError, StorageError) as err:
+        # TODO: check error
+        pass
+
+    return web.json_response(res)
 
 @docs(tags=["present-proof v2.0"], summary="Verify a received presentation")
 @match_info_schema(V20PresExIdMatchInfoSchema())
@@ -1237,8 +1287,16 @@ async def register(app: web.Application):
                 present_proof_send_bound_request,
             ),
             web.post(
+                "/present-proof-2.0/present_identification_vp",
+                present_identification_vp,
+            ),
+            web.post(
                 "/present-proof-2.0/records/{pres_ex_id}/send-presentation",
                 present_proof_send_presentation,
+            ),
+            web.post(
+                "/present-proof-2.0/verify_identification_vp",
+                verify_identification_vp,
             ),
             web.post(
                 "/present-proof-2.0/records/{pres_ex_id}/verify-presentation",

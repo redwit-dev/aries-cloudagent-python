@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 from marshmallow import RAISE
 from typing import Mapping, Tuple
@@ -120,6 +121,25 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
             request_data.get("nonce") or await generate_pr_nonce()
         )
         return self.get_format_data(PRES_20_REQUEST, indy_proof_request)
+
+    # added for REDWIT usage
+    async def create_pres_identification_vp(
+        self,
+        proof_request,
+        requested_credentials,
+        schemas,
+        cred_defs,
+        revocation_states,
+    ) -> Tuple[V20PresFormat, AttachDecorator]:
+        indy_handler = IndyPresExchHandler(self._profile)
+        indy_proof = await indy_handler.return_presentation_identification_vp(
+            proof_request,
+            requested_credentials,
+            schemas,
+            cred_defs,
+            revocation_states
+        )
+        return self.get_format_data(PRES_20, indy_proof)
 
     async def create_pres(
         self,
@@ -292,6 +312,34 @@ class IndyPresExchangeHandler(V20PresFormatHandler):
 
         proof = message.attachment(IndyPresExchangeHandler.format)
         _check_proof_vs_proposal()
+
+    # for redwit
+    async def verify_pres_identification_vp(
+        self,
+        indy_proof_request,
+        pres,
+        schemas,
+        cred_defs,
+        rev_reg_defs,
+        rev_reg_entries
+    ):
+        verifier = self._profile.inject(IndyVerifier)
+        indy_proof = pres.attachment(IndyPresExchangeHandler.format)
+
+        # check time limit
+        timelimit = indy_proof["requested_proof"]["revealed_attr_groups"]["0_identification_uuid"]["values"]["expirationDate"]["raw"]
+        if int(timelimit) < int(time.time()):
+            return False
+
+        res = await verifier.verify_presentation(
+            indy_proof_request,
+            indy_proof,
+            schemas,
+            cred_defs,
+            rev_reg_defs,
+            rev_reg_entries,
+        )
+        return res
 
     async def verify_pres(self, pres_ex_record: V20PresExRecord) -> V20PresExRecord:
         """

@@ -210,6 +210,54 @@ class V20PresManager:
 
         return pres_ex_record
 
+    async def create_pres_identification_vp(
+        self,
+        proof_request,
+        requested_credentials,
+        schemas,
+        cred_defs,
+        revocation_states,
+    ) -> Tuple[V20Pres]:
+        pres_formats = []
+        pres_exch_format = V20PresFormat.Format.INDY
+        pres_formats.append(
+            await pres_exch_format.handler(self._profile).create_pres_identification_vp(
+                proof_request,
+                requested_credentials,
+                schemas,
+                cred_defs,
+                revocation_states
+            )
+        )
+        pres_message = V20Pres(
+            comment="redwit vp pres",
+            formats=[format for (format, _) in pres_formats],
+            presentations_attach=[attach for (_, attach) in pres_formats],
+        )
+        return pres_message
+    async def verify_pres_identification_vp(
+        self,
+        indy_proof_request,
+        pres_serialized,
+        schemas,
+        cred_defs,
+        rev_reg_defs,
+        rev_reg_entries
+    ):
+        pres_exch_format = V20PresFormat.Format.INDY
+        pres = V20Pres.deserialize(pres_serialized)
+        res = await pres_exch_format.handler(
+            self._profile
+        ).verify_pres_identification_vp(
+            indy_proof_request,
+            pres,
+            schemas,
+            cred_defs,
+            rev_reg_defs,
+            rev_reg_entries,
+        )
+        return res
+
     async def create_pres(
         self,
         pres_ex_record: V20PresExRecord,
