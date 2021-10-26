@@ -78,7 +78,7 @@ class CreateWalletRequestSchema(OpenAPISchema):
     wallet_webhook_urls = fields.List(
         fields.Str(
             description="Optional webhook URL to receive webhook messages",
-            example="http://localhost:8022/webhooks",
+            example="http://localhost:18022/webhooks",
         ),
         required=False,
         description="List of Webhook URLs associated with this subwallet",
@@ -138,7 +138,7 @@ class UpdateWalletRequestSchema(OpenAPISchema):
     wallet_webhook_urls = fields.List(
         fields.Str(
             description="Optional webhook URL to receive webhook messages",
-            example="http://localhost:8022/webhooks",
+            example="http://localhost:18022/webhooks",
         ),
         required=False,
         description="List of Webhook URLs associated with this subwallet",

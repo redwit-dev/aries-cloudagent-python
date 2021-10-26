@@ -5124,7 +5124,7 @@
           "description" : "List of Webhook URLs associated with this subwallet",
           "items" : {
             "type" : "string",
-            "example" : "http://localhost:8022/webhooks",
+            "example" : "http://localhost:18022/webhooks",
             "description" : "Optional webhook URL to receive webhook messages"
           }
         }
@@ -7585,7 +7585,7 @@
           "description" : "List of Webhook URLs associated with this subwallet",
           "items" : {
             "type" : "string",
-            "example" : "http://localhost:8022/webhooks",
+            "example" : "http://localhost:18022/webhooks",
             "description" : "Optional webhook URL to receive webhook messages"
           }
         }
